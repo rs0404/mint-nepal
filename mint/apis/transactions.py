@@ -1,8 +1,10 @@
 import frappe
 
 @frappe.whitelist()
-def get_bank_transactions(bank_account, from_date=None, to_date=None, all_transactions=False):
+def get_bank_transactions(bank_account=None, from_date=None, to_date=None, all_transactions=False):
     # returns bank transactions for a bank account
+    if not bank_account:
+        return []
     filters = []
     filters.append(["bank_account", "=", bank_account])
     filters.append(["docstatus", "=", 1])
@@ -40,10 +42,15 @@ def get_bank_transactions(bank_account, from_date=None, to_date=None, all_transa
 
 
 @frappe.whitelist(methods=["GET"])
-def get_older_unreconciled_transactions(bank_account: str, from_date: str):
+def get_older_unreconciled_transactions(bank_account: str = None, from_date: str = None):
     """
         Get the older unreconciled transactions for a bank account
     """
+    if not bank_account or not from_date:
+        return {
+            "count": 0,
+            "oldest_date": None
+        }
     count = frappe.db.count("Bank Transaction", filters={
         "bank_account": bank_account,
         "date": ["<", from_date],

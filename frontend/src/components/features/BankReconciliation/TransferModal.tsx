@@ -15,11 +15,11 @@ import { cn } from '@/lib/utils'
 import { ArrowRight, Banknote, Landmark, BadgeCheck, Calendar, ArrowUpRight, ArrowDownRight, CheckIcon, CheckCircle } from 'lucide-react'
 import { Separator } from '@/components/ui/separator'
 import { Form } from '@/components/ui/form'
-import { AccountFormField, DataField, DateField, SmallTextField } from '@/components/ui/form-elements'
+import { AccountFormField, CurrencyFormField, DataField, DateField, LinkFormField, SmallTextField } from '@/components/ui/form-elements'
 import SelectedTransactionsTable from './SelectedTransactionsTable'
 import { useCurrentCompany } from '@/hooks/useCurrentCompany'
 import { formatDate } from '@/lib/date'
-import { useContext, useMemo, useState } from 'react'
+import { useContext, useEffect, useMemo, useState } from 'react'
 import { formatCurrency } from '@/lib/numbers'
 import { Label } from '@/components/ui/label'
 import { FileDropzone } from '@/components/ui/file-dropzone'
@@ -147,6 +147,9 @@ const BulkInternalTransferForm = ({ transactions }: { transactions: Unreconciled
 
 interface InternalTransferFormFields extends PaymentEntry {
     mirror_transaction_name?: string
+    bank_charge_amount?: number | string
+    bank_charge_account?: string
+    bank_charge_cost_center?: string
 }
 
 const InternalTransferForm = ({ selectedBankAccount, selectedTransaction }: { selectedBankAccount: SelectedBank, selectedTransaction: UnreconciledTransaction }) => {
@@ -195,12 +198,17 @@ const InternalTransferForm = ({ selectedBankAccount, selectedTransaction }: { se
 
     const onSubmit = (data: InternalTransferFormFields) => {
 
+        const charge = typeof data.bank_charge_amount === 'string' ? parseFloat(data.bank_charge_amount) : (data.bank_charge_amount ?? 0)
+
         createPaymentEntry({
             bank_transaction_name: selectedTransaction.name,
             ...data,
             custom_remarks: data.remarks ? true : false,
             // Pass this to reconcile both at the same time
-            mirror_transaction_name: data.mirror_transaction_name
+            mirror_transaction_name: data.mirror_transaction_name,
+            bank_charge_amount: charge || 0,
+            bank_charge_account: charge > 0 ? data.bank_charge_account : undefined,
+            bank_charge_cost_center: charge > 0 ? data.bank_charge_cost_center : undefined,
         }).then(async ({ message }) => {
             addToActionLog({
                 type: 'transfer',
@@ -281,6 +289,40 @@ const InternalTransferForm = ({ selectedBankAccount, selectedTransaction }: { se
 
     const selectedAccount = useWatch({ control: form.control, name: (selectedTransaction.deposit && selectedTransaction.deposit > 0) ? 'paid_from' : 'paid_to' })
 
+    const { data: defaultChargeAccount } = useFrappeGetCall<{ message: string }>('frappe.client.get_single_value', {
+        doctype: 'Mint Settings',
+        field: 'bank_charge_account'
+    }, undefined, {
+        revalidateOnFocus: false,
+        revalidateIfStale: false,
+        // Always fetch fresh on mount - a cached empty value from before the
+        // setting was configured would otherwise prevent the prefill
+        revalidateOnMount: true,
+    })
+
+    const { data: defaultChargeCostCenter } = useFrappeGetCall<{ message: string }>('frappe.client.get_single_value', {
+        doctype: 'Mint Settings',
+        field: 'bank_charge_cost_center'
+    }, undefined, {
+        revalidateOnFocus: false,
+        revalidateIfStale: false,
+        revalidateOnMount: true,
+    })
+
+    useEffect(() => {
+        if (defaultChargeAccount?.message) {
+            form.setValue('bank_charge_account', defaultChargeAccount.message)
+        }
+    }, [defaultChargeAccount])
+
+    useEffect(() => {
+        if (defaultChargeCostCenter?.message) {
+            form.setValue('bank_charge_cost_center', defaultChargeCostCenter.message)
+        }
+    }, [defaultChargeCostCenter])
+
+    const bankChargeAmount = useWatch({ control: form.control, name: 'bank_charge_amount' })
+    const chargeAmount = typeof bankChargeAmount === 'string' ? parseFloat(bankChargeAmount) : (bankChargeAmount ?? 0)
 
     if (isUploading && isCompleted) {
         return <FileUploadBanner uploadProgress={uploadProgress} />
@@ -345,6 +387,60 @@ const InternalTransferForm = ({ selectedBankAccount, selectedTransaction }: { se
                         </div>
                     </div>
                 </div>
+                <div className='grid grid-cols-3 gap-4'>
+                    <CurrencyFormField
+                        name='bank_charge_amount'
+                        label={_("Bank Charge")}
+                        currency={selectedTransaction.currency}
+                        formDescription={_("Charge deducted by the bank on this transfer.")}
+                        rules={{
+                            validate: (value) => {
+                                const amount = typeof value === 'string' ? parseFloat(value) : value
+                                if (!amount) return true
+                                if (amount < 0) return _("Bank charge cannot be negative")
+                                if (isWithdrawal && amount >= (selectedTransaction.unallocated_amount ?? 0)) {
+                                    return _("Bank charge must be less than the transaction amount")
+                                }
+                                return true
+                            }
+                        }}
+                    />
+                    <AccountFormField
+                        name='bank_charge_account'
+                        label={_("Bank Charge Account")}
+                        root_type={['Expense']}
+                        company={selectedTransaction.company}
+                        rules={{
+                            validate: (value, formValues) => {
+                                // formValues is read at validation time - a captured
+                                // chargeAmount would be stale since RHF registers rules once on mount
+                                const amount = typeof formValues.bank_charge_amount === 'string' ? parseFloat(formValues.bank_charge_amount) : formValues.bank_charge_amount
+                                if (amount > 0 && !value) return _("Bank Charge Account is required")
+                                return true
+                            }
+                        }}
+                    />
+                    <LinkFormField
+                        name='bank_charge_cost_center'
+                        doctype='Cost Center'
+                        label={_("Bank Charge Cost Center")}
+                        filters={[["company", "=", selectedTransaction.company ?? ''], ["is_group", "=", 0], ["disabled", "=", 0]]}
+                        rules={{
+                            validate: (value, formValues) => {
+                                const amount = typeof formValues.bank_charge_amount === 'string' ? parseFloat(formValues.bank_charge_amount) : formValues.bank_charge_amount
+                                if (amount > 0 && !value) return _("Bank Charge Cost Center is required")
+                                return true
+                            }
+                        }}
+                    />
+                </div>
+                {chargeAmount > 0 && (
+                    <span className='text-sm text-muted-foreground -mt-2'>
+                        {isWithdrawal
+                            ? _("Net amount received: {0}", [formatCurrency((selectedTransaction.unallocated_amount ?? 0) - chargeAmount, selectedTransaction.currency)])
+                            : _("Net amount paid: {0}", [formatCurrency((selectedTransaction.unallocated_amount ?? 0) + chargeAmount, selectedTransaction.currency)])}
+                    </span>
+                )}
                 <Separator />
                 <div className='flex flex-col gap-2'>
                     <div className='grid grid-cols-2 gap-4'>

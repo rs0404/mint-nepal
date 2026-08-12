@@ -15,6 +15,8 @@ class MintSettings(Document):
 		from frappe.types import DF
 
 		automatically_run_rules_on_unreconciled_transactions: DF.Check
+		bank_charge_account: DF.Link | None
+		bank_charge_cost_center: DF.Link | None
 		bank_statement_gdoc_processor: DF.Data | None
 		google_processor_location: DF.Literal["us", "eu"]
 		google_project_id: DF.Data | None

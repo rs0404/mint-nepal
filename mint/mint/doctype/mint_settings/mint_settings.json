@@ -7,6 +7,8 @@
  "field_order": [
   "general_section",
   "transfer_match_days",
+  "bank_charge_account",
+  "bank_charge_cost_center",
   "google_document_ai_section",
   "automatically_run_rules_on_unreconciled_transactions",
   "google_project_id",
@@ -66,6 +68,20 @@
    "label": "Match Transfers across (days)",
    "non_negative": 1,
    "reqd": 1
+  },
+  {
+   "description": "Default expense account for bank charges on internal transfers.",
+   "fieldname": "bank_charge_account",
+   "fieldtype": "Link",
+   "label": "Bank Charge Account",
+   "options": "Account"
+  },
+  {
+   "description": "Default cost center for bank charges on internal transfers.",
+   "fieldname": "bank_charge_cost_center",
+   "fieldtype": "Link",
+   "label": "Bank Charge Cost Center",
+   "options": "Cost Center"
   }
  ],
  "grid_page_length": 50,

@@ -12,6 +12,10 @@ export interface MintSettings{
 	idx?: number
 	/**	Match Transfers across (days) : Int - Number of days to consider for transfer matching across bank accounts.	*/
 	transfer_match_days?: number
+	/**	Bank Charge Account : Link - Account - Default expense account for bank charges on internal transfers.	*/
+	bank_charge_account?: string
+	/**	Bank Charge Cost Center : Link - Cost Center - Default cost center for bank charges on internal transfers.	*/
+	bank_charge_cost_center?: string
 	/**	Automatically run rules on unreconciled transactions : Check - If checked, this job will run every 30 minutes	*/
 	automatically_run_rules_on_unreconciled_transactions?: 0 | 1
 	/**	Google Project ID : Data	*/

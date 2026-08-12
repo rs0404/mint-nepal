@@ -2,9 +2,11 @@ import frappe
 from frappe import _
 import json
 import datetime
-from erpnext.accounts.doctype.bank_reconciliation_tool.bank_reconciliation_tool import create_payment_entry_bts, create_journal_entry_bts
+from erpnext.accounts.doctype.bank_reconciliation_tool.bank_reconciliation_tool import create_payment_entry_bts, create_journal_entry_bts, check_matching, subtract_allocations
+from erpnext.accounts.doctype.accounting_dimension.accounting_dimension import get_accounting_dimensions
 from erpnext.accounts.party import get_party_account
 from erpnext import get_default_cost_center
+from frappe.utils import flt
 
 @frappe.whitelist()
 def clear_clearing_date(voucher_type: str, voucher_name: str):
@@ -130,17 +132,38 @@ def create_bulk_internal_transfer(bank_transaction_names: list[str|int],
     
     return output
 
+def get_bank_charge_dimension(bank_account: str) -> str | None:
+    """
+    Return the Bank to tag on a bank charge via the "Bank Charge" accounting dimension.
+
+    Returns None (without raising) if the dimension is absent/disabled, or if the
+    bank account's bank is not a valid option (Bank record) for the dimension.
+    """
+    if "bank_charge" not in get_accounting_dimensions():
+        return None
+
+    bank = frappe.get_cached_value("Bank Account", bank_account, "bank")
+
+    if bank and frappe.db.exists("Bank", bank):
+        return bank
+
+    return None
+
+
 @frappe.whitelist()
-def create_internal_transfer(bank_transaction_name: str|int, 
-                             posting_date: str | datetime.date, 
-                             reference_date: str | datetime.date, 
-                             reference_no: str, 
-                             paid_from: str, 
+def create_internal_transfer(bank_transaction_name: str|int,
+                             posting_date: str | datetime.date,
+                             reference_date: str | datetime.date,
+                             reference_no: str,
+                             paid_from: str,
                              paid_to: str,
                              custom_remarks: bool = False,
                              remarks: str = None,
                              mirror_transaction_name: str | int = None,
-                             dimensions: dict = None):
+                             dimensions: dict = None,
+                             bank_charge_amount: float = 0,
+                             bank_charge_account: str = None,
+                             bank_charge_cost_center: str = None):
     """
     Create an internal transfer payment entry
     """
@@ -152,6 +175,22 @@ def create_internal_transfer(bank_transaction_name: str|int,
 
     is_withdrawal = bank_transaction.withdrawal > 0.0
 
+    charge = flt(bank_charge_amount)
+
+    if charge > 0:
+        if not bank_charge_account:
+            frappe.throw(_("Bank Charge Account is required when a bank charge is applied."))
+
+        if not bank_charge_cost_center:
+            bank_charge_cost_center = frappe.db.get_single_value("Mint Settings", "bank_charge_cost_center")
+
+        if not bank_charge_cost_center:
+            # Cost Center is mandatory on Payment Entry Deduction rows
+            frappe.throw(_("Bank Charge Cost Center is required when a bank charge is applied. Set a default in Mint Settings."))
+
+        if is_withdrawal and charge >= bank_transaction.unallocated_amount:
+            frappe.throw(_("Bank charge must be less than the transaction amount."))
+
     pe = frappe.new_doc("Payment Entry")
 
     pe.company = company
@@ -160,15 +199,26 @@ def create_internal_transfer(bank_transaction_name: str|int,
     pe.reference_date = reference_date
     pe.reference_no = reference_no
     pe.custom_remarks = custom_remarks
-    pe.paid_amount = bank_transaction.unallocated_amount
-    pe.received_amount = bank_transaction.unallocated_amount
+
+    if charge > 0:
+        if is_withdrawal:
+            # The source bank statement shows the full withdrawal; the
+            # destination receives the amount net of the charge.
+            pe.paid_amount = bank_transaction.unallocated_amount
+            pe.received_amount = bank_transaction.unallocated_amount - charge
+        else:
+            pe.received_amount = bank_transaction.unallocated_amount
+            pe.paid_amount = bank_transaction.unallocated_amount + charge
+    else:
+        pe.paid_amount = bank_transaction.unallocated_amount
+        pe.received_amount = bank_transaction.unallocated_amount
 
     # TODO: Support multi-currency transactions
     pe.target_exchange_rate = 1.0
 
     if custom_remarks:
         pe.remarks = remarks
-    
+
     if dimensions:
         pe.update(dimensions)
 
@@ -178,7 +228,24 @@ def create_internal_transfer(bank_transaction_name: str|int,
     else:
          pe.paid_from = paid_from
          pe.paid_to = bank_account
-    
+
+    if charge > 0:
+        deduction = {
+            "account": bank_charge_account,
+            "amount": charge,
+            "cost_center": bank_charge_cost_center,
+            # ERPNext books the paid/received difference of an internal transfer
+            # into an exchange gain/loss row - flagging the charge row makes it
+            # reuse this row instead of adding a second one.
+            "is_exchange_gain_loss": 1,
+        }
+
+        dimension_bank = get_bank_charge_dimension(bank_transaction.bank_account)
+        if dimension_bank:
+            deduction["bank_charge"] = dimension_bank
+
+        pe.append("deductions", deduction)
+
     pe.insert()
     pe.submit()
 
@@ -510,3 +577,54 @@ def search_for_transfer_transaction(transaction_id: str | int):
 
     return None
 
+
+@frappe.whitelist()
+def get_linked_payments(
+	bank_transaction_name,
+	document_types=None,
+	from_date=None,
+	to_date=None,
+	filter_by_reference_date=None,
+	from_reference_date=None,
+	to_reference_date=None,
+	party=None,
+	min_amount=None,
+	max_amount=None,
+):
+	# get all matching payments for a bank transaction
+	transaction = frappe.get_doc("Bank Transaction", bank_transaction_name)
+	bank_account = frappe.db.get_values(
+		"Bank Account", transaction.bank_account, ["account", "company"], as_dict=True
+	)[0]
+	(gl_account, company) = (bank_account.account, bank_account.company)
+	
+	if isinstance(document_types, str):
+		document_types = json.loads(document_types)
+
+	matching = check_matching(
+		gl_account,
+		company,
+		transaction,
+		document_types,
+		from_date,
+		to_date,
+		filter_by_reference_date,
+		from_reference_date,
+		to_reference_date,
+	)
+
+	# ERPNext v15's check_matching does not support party/min_amount/max_amount
+	# filters, so they are applied here on the matched vouchers instead.
+	if party:
+		matching = [voucher for voucher in matching if voucher.get("party") == party]
+
+	min_amount = flt(min_amount) if min_amount else None
+	max_amount = flt(max_amount) if max_amount else None
+
+	if min_amount is not None:
+		matching = [voucher for voucher in matching if flt(voucher.get("paid_amount")) >= min_amount]
+
+	if max_amount is not None:
+		matching = [voucher for voucher in matching if flt(voucher.get("paid_amount")) <= max_amount]
+
+	return subtract_allocations(gl_account, matching)

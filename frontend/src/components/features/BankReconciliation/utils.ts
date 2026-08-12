@@ -1,4 +1,4 @@
-import { ActionLog, bankRecActionLog, bankRecAmountFilter, bankRecDateAtom, bankRecMatchFilters, bankRecSearchText, bankRecSelectedTransactionAtom, bankRecTransactionTypeFilter, bankRecUnreconcileModalAtom, SelectedBank, selectedBankAccountAtom } from './bankRecAtoms'
+import { ActionLog, bankRecActionLog, bankRecAmountFilter, bankRecDateAtom, bankRecMatchFilters, bankRecSearchText, bankRecSelectedTransactionAtom, bankRecTransactionTypeFilter, bankRecUnreconcileModalAtom, bankRecVoucherAmountFilter, bankRecVoucherCustomerFilter, bankRecVoucherDateFilter, SelectedBank, selectedBankAccountAtom } from './bankRecAtoms'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useMemo } from 'react'
 import { SWRConfiguration, useFrappeGetCall, useFrappeGetDoc, useFrappePostCall, useSWRConfig } from 'frappe-react-sdk'
@@ -33,9 +33,11 @@ export const useGetAccountOpeningBalance = () => {
 
     }, [companyID, bankAccount?.name, dates.fromDate])
 
-    return useFrappeGetCall('erpnext.accounts.doctype.bank_reconciliation_tool.bank_reconciliation_tool.get_account_balance', args, undefined, {
-        revalidateOnFocus: false
-    })
+    return useFrappeGetCall('erpnext.accounts.doctype.bank_reconciliation_tool.bank_reconciliation_tool.get_account_balance', args,
+        bankAccount ? `bank-reconciliation-account-opening-balance-${bankAccount?.name}-${dates.fromDate}` : null,
+        {
+            revalidateOnFocus: false
+        })
 }
 
 export const useGetAccountClosingBalance = () => {
@@ -56,7 +58,7 @@ export const useGetAccountClosingBalance = () => {
     }, [companyID, bankAccount?.name, dates.toDate])
 
     return useFrappeGetCall('erpnext.accounts.doctype.bank_reconciliation_tool.bank_reconciliation_tool.get_account_balance', args,
-        `bank-reconciliation-account-closing-balance-${bankAccount?.name}-${dates.toDate}`,
+        bankAccount ? `bank-reconciliation-account-closing-balance-${bankAccount?.name}-${dates.toDate}` : null,
         {
             revalidateOnFocus: false
         }
@@ -75,7 +77,7 @@ export const useGetAccountClosingBalanceAsPerStatement = (swrConfig: SWRConfigur
     return useFrappeGetCall<{ message: { balance: number, date?: string } }>("mint.apis.bank_account.get_closing_balance_as_per_statement", {
         bank_account: bankAccount?.name,
         date: dates.toDate
-    }, `bank-reconciliation-account-closing-balance-as-per-statement-${bankAccount?.name}-${dates.toDate}`, {
+    }, bankAccount ? `bank-reconciliation-account-closing-balance-as-per-statement-${bankAccount?.name}-${dates.toDate}` : null, {
         revalidateOnFocus: false,
         ...swrConfig
     })
@@ -91,7 +93,7 @@ export const useGetUnreconciledTransactions = () => {
         bank_account: bankAccount?.name,
         from_date: dates.fromDate,
         to_date: dates.toDate
-    }, `bank-reconciliation-unreconciled-transactions-${bankAccount?.name}-${dates.fromDate}-${dates.toDate}`, {
+    }, bankAccount ? `bank-reconciliation-unreconciled-transactions-${bankAccount?.name}-${dates.fromDate}-${dates.toDate}` : null, {
         revalidateOnFocus: false,
         revalidateIfStale: false
     })
@@ -125,19 +127,40 @@ export const useGetBankTransactions = () => {
 export const useGetVouchersForTransaction = (transaction: UnreconciledTransaction) => {
 
     const dates = useAtomValue(bankRecDateAtom)
-
     const matchFilters = useAtomValue(bankRecMatchFilters)
+    const voucherAmountFilter = useAtomValue(bankRecVoucherAmountFilter)
+    const voucherCustomerFilter = useAtomValue(bankRecVoucherCustomerFilter)
+    const voucherDateFilter = useAtomValue(bankRecVoucherDateFilter)
 
-    return useFrappeGetCall<{ message: LinkedPayment[] }>('erpnext.accounts.doctype.bank_reconciliation_tool.bank_reconciliation_tool.get_linked_payments', {
+    const transactionAmount = transaction.unallocated_amount || 0
+    let min_amount = voucherAmountFilter.min
+    let max_amount = voucherAmountFilter.max
+
+    if (voucherAmountFilter.includeTDS) {
+        // If include TDS, we want to find vouchers that are either the exact amount OR the gross amount
+        // Standard TDS is 1.5%
+        const grossAmount = transactionAmount / 0.985
+        min_amount = transactionAmount
+        max_amount = grossAmount + 0.1 // Add a small tolerance
+    }
+
+    const fromDate = voucherDateFilter.fromDate || dates.fromDate
+    const toDate = voucherDateFilter.toDate || dates.toDate
+
+    return useFrappeGetCall<{ message: LinkedPayment[] }>('mint.apis.bank_reconciliation.get_linked_payments', {
         bank_transaction_name: transaction.name,
         document_types: matchFilters ?? ['payment_entry', 'journal_entry'],
-        from_date: dates.fromDate,
-        to_date: dates.toDate,
-        filter_by_reference_date: 0
-    }, `bank-reconciliation-vouchers-${transaction.name}-${dates.fromDate}-${dates.toDate}-${matchFilters.join(',')}`, {
+        from_date: fromDate,
+        to_date: toDate,
+        filter_by_reference_date: 0,
+        party: voucherCustomerFilter || undefined,
+        min_amount: min_amount,
+        max_amount: max_amount
+    }, `bank-reconciliation-vouchers-${transaction.name}-${fromDate}-${toDate}-${matchFilters.join(',')}-${voucherCustomerFilter}-${min_amount}-${max_amount}`, {
         revalidateOnFocus: false
     })
 }
+
 
 /**
  * Common hook to refresh the unreconciled transactions list after a transaction is reconciled
@@ -182,7 +205,7 @@ export const useRefreshUnreconciledTransactions = () => {
             includeScore: true
         }) : null
 
-        const results = getSearchResults(searchIndex, searchString, typeFilter, amountFilter.value, unreconciledTransactions?.message)
+        const results = getSearchResults(searchIndex, searchString, typeFilter, amountFilter, unreconciledTransactions?.message)
 
         const currentIndex = results.findIndex(t => t.name === transaction.name)
         let nextTransaction = null
@@ -377,7 +400,7 @@ export const getSearchResults = (
     /** Type filter */
     typeFilter: string,
     /** Amount filter */
-    amountFilter: number,
+    amountFilter: string,
     /** Unreconciled transactions */
     unreconciledTransactions?: UnreconciledTransaction[]) => {
 
@@ -399,15 +422,31 @@ export const getSearchResults = (
         })
     }
 
-    if (amountFilter > 0) {
+    if (amountFilter !== '') {
+        const parseRange = (filter: string) => {
+            const rangeParts = filter.split(/[-]| to /i)
+            if (rangeParts.length === 2) {
+                const min = parseFloat(rangeParts[0].trim())
+                const max = parseFloat(rangeParts[1].trim())
+                if (!isNaN(min) && !isNaN(max)) {
+                    return { min, max }
+                }
+            }
+            return null
+        }
+
+        const range = parseRange(amountFilter)
+
         r = r.filter((transaction) => {
-            if (transaction.withdrawal && transaction.withdrawal > 0) {
-                return transaction.withdrawal === amountFilter
+            const amount = (transaction.withdrawal && transaction.withdrawal > 0) ? transaction.withdrawal : transaction.deposit || 0
+            
+            if (range) {
+                return amount >= range.min && amount <= range.max
             }
-            if (transaction.deposit && transaction.deposit > 0) {
-                return transaction.deposit === amountFilter
-            }
-            return false
+
+            // Partial string match as requested (e.g., '9' matches '90', '9001')
+            const amountStr = amount.toString()
+            return amountStr.includes(amountFilter)
         })
     }
 

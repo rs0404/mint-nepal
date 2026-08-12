@@ -12,12 +12,10 @@ import { AlertCircle, ArrowDownRight, ArrowRightIcon, ArrowRightLeft, ArrowUpRig
 import { cn } from "@/lib/utils"
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu"
 import { Button } from "@/components/ui/button"
-import CurrencyInput from 'react-currency-input-field'
-import { getCurrencySymbol } from "@/lib/currency"
 import { Virtuoso } from 'react-virtuoso'
 import { formatDate } from "@/lib/date"
 import { Badge } from "@/components/ui/badge"
-import { formatCurrency, getCurrencyFormatInfo } from "@/lib/numbers"
+import { formatCurrency } from "@/lib/numbers"
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip"
 import { Skeleton } from "@/components/ui/skeleton"
 import { slug } from "@/lib/frappe"
@@ -70,13 +68,6 @@ const MatchAndReconcile = ({ contentHeight }: { contentHeight: number }) => {
 
 const UnreconciledTransactions = ({ contentHeight }: { contentHeight: number }) => {
     const bankAccount = useAtomValue(selectedBankAccountAtom)
-
-    const currency = bankAccount?.account_currency ?? getCompanyCurrency(bankAccount?.company ?? '')
-    const currencySymbol = getCurrencySymbol(currency)
-    const formatInfo = getCurrencyFormatInfo(currency)
-    const groupSeparator = formatInfo.group_sep || ","
-    const decimalSeparator = formatInfo.decimal_str || "."
-
     const inputRef = useRef<HTMLInputElement>(null)
 
     const { data: unreconciledTransactions, isLoading, error } = useGetUnreconciledTransactions()
@@ -100,10 +91,8 @@ const UnreconciledTransactions = ({ contentHeight }: { contentHeight: number }) 
     }, [unreconciledTransactions])
 
     const results = useMemo(() => {
-
-        return getSearchResults(searchIndex, search, typeFilter, amountFilter.value, unreconciledTransactions?.message)
-
-    }, [searchIndex, search, typeFilter, amountFilter.value, unreconciledTransactions?.message])
+        return getSearchResults(searchIndex, search, typeFilter, amountFilter, unreconciledTransactions?.message)
+    }, [searchIndex, search, typeFilter, amountFilter, unreconciledTransactions?.message])
 
     const setSelectedTransaction = useSetAtom(bankRecSelectedTransactionAtom(bankAccount?.name || ''))
 
@@ -127,11 +116,11 @@ const UnreconciledTransactions = ({ contentHeight }: { contentHeight: number }) 
             inputRef.current.value = ''
         }
         setTypeFilter('All')
-        setAmountFilter({ value: 0, stringValue: '' })
+        setAmountFilter('')
         onFilterChange()
     }
 
-    const hasFilters = search !== '' || typeFilter !== 'All' || amountFilter.value !== 0
+    const hasFilters = search !== '' || typeFilter !== 'All' || amountFilter !== ''
 
     if (isLoading) {
         return <UnreconciledTransactionsLoadingState />
@@ -158,30 +147,27 @@ const UnreconciledTransactions = ({ contentHeight }: { contentHeight: number }) 
             </div>
             <div>
                 <label className="sr-only">{_("Filter by amount")}</label>
-                <CurrencyInput
-                    groupSeparator={groupSeparator}
-                    decimalSeparator={decimalSeparator}
-                    placeholder={`${currencySymbol}0${decimalSeparator}00`}
-                    decimalsLimit={2}
-                    value={amountFilter.stringValue}
-                    maxLength={12}
-                    decimalScale={2}
-                    prefix={currencySymbol}
-                    onValueChange={(v, _n, values) => {
-                        // If the input ends with a decimal or a decimal with trailing zeroes, store the string since we need the user to be able to type the decimals.
-                        // When the user eventually types the decimals or blurs out, the value is formatted anyway.
-                        // Otherwise store the float value
-                        // Check if the value ends with a decimal or a decimal with trailing zeroes
-                        const isDecimal = v?.endsWith(decimalSeparator) || v?.endsWith(decimalSeparator + '0')
-                        const newValue = isDecimal ? v : values?.float ?? ''
-                        setAmountFilter({
-                            value: Number(newValue),
-                            stringValue: newValue
-                        })
-                        onFilterChange()
-                    }}
-                    customInput={Input}
-                />
+                <TooltipProvider>
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <Input
+                                placeholder={_("Amount or Range (e.g. 4000-5000)")}
+                                value={amountFilter}
+                                onChange={(e) => {
+                                    setAmountFilter(e.target.value)
+                                    onFilterChange()
+                                }}
+                                className="w-48 h-9"
+                            />
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" align="start" className="max-w-[300px]">
+                            <p className="text-xs font-semibold">{_("Search by Amount Pattern or Range")}</p>
+                            <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                                {_("Type a partial amount (e.g., '9' to match '90', '9001') or a range (e.g., '4000-5000').")}
+                            </p>
+                        </TooltipContent>
+                    </Tooltip>
+                </TooltipProvider>
             </div>
             <div>
                 <DropdownMenu>
@@ -531,7 +517,7 @@ const OptionsForSingleTransaction = ({ transaction, contentHeight }: { transacti
                         </TooltipContent>
                     </Tooltip>
                 </div>
-                <MatchFilters />
+                <MatchFilters transaction={transaction} />
             </div>
         </TooltipProvider>
         {transaction.matched_rule && <RuleAction transaction={transaction} />}

@@ -41,11 +41,19 @@ export const bankRecUnreconcileModalAtom = atom<string>('')
 export const bankRecMatchFilters = atomWithStorage<string[]>('mint-bank-rec-match-filters', ['payment_entry', 'journal_entry'])
 
 export const bankRecSearchText = atom<string>('')
-export const bankRecAmountFilter = atom<{ value: number, stringValue?: string | number }>({
-    value: 0,
-    stringValue: '0.00'
-})
+export const bankRecAmountFilter = atom<string>('')
 export const bankRecTransactionTypeFilter = atom<string>('All')
+
+export const bankRecVoucherCustomerFilter = atom<string>('')
+export const bankRecVoucherDateFilter = atom<{ fromDate: string | undefined, toDate: string | undefined }>({
+    fromDate: undefined,
+    toDate: undefined
+})
+export const bankRecVoucherAmountFilter = atom<{ min: number | undefined, max: number | undefined, includeTDS: boolean }>({
+    min: undefined,
+    max: undefined,
+    includeTDS: false
+})
 
 export interface ActionLog {
     type: 'match' | 'payment' | 'transfer' | 'bank_entry'
