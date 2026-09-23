@@ -24,6 +24,7 @@ class MintBankTransactionRule(Document):
 		classify_as: DF.Literal["Bank Entry", "Payment Entry", "Transfer"]
 		company: DF.Link
 		description_rules: DF.Table[MintBankTransactionDescriptionRules]
+		enabled: DF.Check
 		max_amount: DF.Currency
 		min_amount: DF.Currency
 		party: DF.DynamicLink | None

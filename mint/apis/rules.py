@@ -18,7 +18,12 @@ def _run_rule_evaluation(force_evaluate=False):
 
     If force evaluate is set to True, then transactions that were previously evaluated will be evaluated again.
     """
-    rules = frappe.get_all("Mint Bank Transaction Rule", fields=["name"], order_by="priority asc")
+    rules = frappe.get_all(
+        "Mint Bank Transaction Rule",
+        filters={"enabled": 1},
+        fields=["name"],
+        order_by="priority asc",
+    )
 
     if not rules:
         return

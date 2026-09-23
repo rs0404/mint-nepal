@@ -14,6 +14,8 @@ export interface MintBankTransactionRule{
 	idx?: number
 	/**	Rule Name : Data	*/
 	rule_name: string
+	/**	Enabled : Check	*/
+	enabled?: 0 | 1
 	/**	Transaction Type : Select	*/
 	transaction_type: "Any" | "Withdrawal" | "Deposit"
 	/**	Priority : Int	*/

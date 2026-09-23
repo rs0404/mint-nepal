@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { SelectItem } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
+import { Switch } from "@/components/ui/switch"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { H4, Paragraph } from "@/components/ui/typography"
@@ -36,6 +37,26 @@ export const RuleForm = ({ isEdit = false }: { isEdit?: boolean }) => {
             rules={{
                 required: _("Rule name is required")
             }}
+        />
+
+        <FormField
+            name='enabled'
+            render={({ field }) => (
+                <FormItem className="flex flex-row items-center justify-between gap-4 rounded-lg border p-3">
+                    <div className="space-y-0.5">
+                        <FormLabel>{_("Enabled")}</FormLabel>
+                        <Paragraph className="text-sm text-muted-foreground">
+                            {_("Disabled rules are skipped when running rule evaluation.")}
+                        </Paragraph>
+                    </div>
+                    <FormControl>
+                        <Switch
+                            checked={field.value !== 0 && field.value !== false}
+                            onCheckedChange={(checked) => field.onChange(checked ? 1 : 0)}
+                        />
+                    </FormControl>
+                </FormItem>
+            )}
         />
 
         <CompanySelector />

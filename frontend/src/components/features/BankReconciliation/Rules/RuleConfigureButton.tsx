@@ -32,6 +32,8 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { Switch } from "@/components/ui/switch"
+import { cn } from "@/lib/utils"
 
 const RuleConfigureButton = () => {
 
@@ -89,7 +91,7 @@ const RuleConfigureButton = () => {
 const RuleList = ({ setSelectedRule, setIsNewRule }: { setSelectedRule: (rule: string) => void, setIsNewRule: (isNewRule: boolean) => void }) => {
 
     const { data, error, isLoading, mutate } = useFrappeGetDocList<MintBankTransactionRule>("Mint Bank Transaction Rule", {
-        fields: ["name", "rule_name", "rule_description", "transaction_type", "priority"],
+        fields: ["name", "rule_name", "rule_description", "transaction_type", "priority", "enabled"],
         orderBy: {
             field: 'priority',
             order: 'asc'
@@ -115,6 +117,19 @@ const RuleList = ({ setSelectedRule, setIsNewRule }: { setSelectedRule: (rule: s
             success: _("Rule deleted."),
             error: _("Failed to delete rule.")
         })
+    }
+
+    const onToggleEnabled = (ruleID: string, enabled: boolean) => {
+        toast.promise(
+            db.setValue("Mint Bank Transaction Rule", ruleID, "enabled", enabled ? 1 : 0).then(() => {
+                mutate()
+            }),
+            {
+                loading: _("Updating..."),
+                success: enabled ? _("Rule enabled.") : _("Rule disabled. It will be skipped on the next run."),
+                error: _("Failed to update rule."),
+            }
+        )
     }
 
     const handleRunRules = async (forceEvaluate: boolean = false) => {
@@ -227,6 +242,7 @@ const RuleList = ({ setSelectedRule, setIsNewRule }: { setSelectedRule: (rule: s
                                         rule={rule}
                                         setSelectedRule={setSelectedRule}
                                         onDeleteRule={onDeleteRule}
+                                        onToggleEnabled={onToggleEnabled}
                                     />
                                 ))}
                             </ul>
@@ -291,11 +307,13 @@ const AutoRunRuleItem = () => {
 const SortableRuleItem = ({
     rule,
     setSelectedRule,
-    onDeleteRule
+    onDeleteRule,
+    onToggleEnabled,
 }: {
     rule: MintBankTransactionRule
     setSelectedRule: (rule: string) => void
     onDeleteRule: (ruleID: string) => void
+    onToggleEnabled: (ruleID: string, enabled: boolean) => void
 }) => {
     const {
         attributes,
@@ -312,9 +330,11 @@ const SortableRuleItem = ({
         opacity: isDragging ? 0.5 : 1,
     }
 
+    const isEnabled = rule.enabled !== 0
+
     return (
         <li ref={setNodeRef} style={style}>
-            <div className="flex justify-between items-center py-2 h-full">
+            <div className={cn("flex justify-between items-center py-2 h-full", !isEnabled && "opacity-60")}>
                 <div className="flex items-center gap-2">
                     <div
                         {...attributes}
@@ -338,6 +358,11 @@ const SortableRuleItem = ({
                             <div title={rule.transaction_type === "Any" ? _("Any") : rule.transaction_type === "Withdrawal" ? _("Withdrawal") : _("Deposit")}>
                                 {rule.transaction_type === "Any" ? <ArrowDownUp className="text-muted-foreground w-4 h-4" /> : rule.transaction_type === "Withdrawal" ? <ArrowUpRight className="text-destructive w-5 h-5" /> : <ArrowDownRight className="text-green-600 w-5 h-5" />}
                             </div>
+                            {!isEnabled && (
+                                <Badge variant="secondary" className="text-xs font-mono bg-muted text-muted-foreground">
+                                    {_("Disabled")}
+                                </Badge>
+                            )}
                         </div>
                         <span className="text-sm text-muted-foreground">
                             {rule.rule_description}
@@ -346,6 +371,12 @@ const SortableRuleItem = ({
                 </div>
 
                 <div className="flex items-center gap-2 h-full justify-center">
+                    <Switch
+                        checked={isEnabled}
+                        onCheckedChange={(checked) => onToggleEnabled(rule.name, checked)}
+                        title={isEnabled ? _("Disable rule") : _("Enable rule")}
+                        aria-label={isEnabled ? _("Disable rule") : _("Enable rule")}
+                    />
                     <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                             <Button variant='ghost' size='icon'>
