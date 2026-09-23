@@ -86,7 +86,8 @@ const UnreconciledTransactions = ({ contentHeight }: { contentHeight: number }) 
 
         return new Fuse(unreconciledTransactions.message, {
             keys: ['description', 'reference_number'],
-            threshold: 0.5,
+            threshold: 0.3,
+            ignoreLocation: true,
             includeScore: true
         })
     }, [unreconciledTransactions])
