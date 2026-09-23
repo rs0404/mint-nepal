@@ -3,6 +3,7 @@ import { MissingFiltersBanner } from "./MissingFiltersBanner"
 import { bankRecDateAtom, bankRecUnreconcileModalAtom, selectedBankAccountAtom } from "./bankRecAtoms"
 import { Paragraph } from "@/components/ui/typography"
 import { formatDate } from "@/lib/date"
+import DualDate from "@/components/common/DualDate"
 import { Table, TableBody, TableCell, TableHead, TableRow } from "@/components/ui/table"
 import { formatCurrency, getCurrencyFormatInfo } from "@/lib/numbers"
 import { getCompanyCurrency } from "@/lib/company"
@@ -169,7 +170,7 @@ const BankTransactionListView = () => {
             )}
             itemContent={(_index, row) => (
                 <>
-                    <TableCell>{formatDate(row.date)}</TableCell>
+                    <TableCell><DualDate date={row.date} /></TableCell>
                     <TableCell className="max-w-[300px] overflow-hidden text-ellipsis whitespace-nowrap"><span title={row.description}>{row.description}</span></TableCell>
                     <TableCell>{row.reference_number}</TableCell>
                     <TableCell className="text-right">{formatCurrency(row.withdrawal, bankAccount?.account_currency ?? getCompanyCurrency(bankAccount?.company ?? ''))}</TableCell>

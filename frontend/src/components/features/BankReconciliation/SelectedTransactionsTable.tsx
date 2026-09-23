@@ -2,7 +2,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import _ from '@/lib/translate'
 import { useAtomValue } from 'jotai'
 import { bankRecSelectedTransactionAtom, selectedBankAccountAtom } from './bankRecAtoms'
-import { formatDate } from '@/lib/date'
+import DualDate from '@/components/common/DualDate'
 import { formatCurrency } from '@/lib/numbers'
 import { ArrowDownRight, ArrowUpRight } from 'lucide-react'
 
@@ -29,7 +29,7 @@ const SelectedTransactionsTable = () => {
             <TableBody>
                 {transactions.map((transaction) => (
                     <TableRow key={transaction.name}>
-                        <TableCell>{formatDate(transaction.date)}</TableCell>
+                        <TableCell><DualDate date={transaction.date} /></TableCell>
                         <TableCell className="max-w-96 text-ellipsis overflow-hidden" title={transaction.description}>{transaction.description}</TableCell>
                         <TableCell className="text-right flex items-center justify-end gap-1">
                             {transaction.withdrawal && transaction.withdrawal > 0 ? <ArrowUpRight className="w-4 h-4 text-destructive" /> : <ArrowDownRight className="w-4 h-4 text-green-600" />}

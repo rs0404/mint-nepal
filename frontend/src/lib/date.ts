@@ -6,6 +6,7 @@ import relativeTime from 'dayjs/plugin/relativeTime';
 import quarterOfYear from 'dayjs/plugin/quarterOfYear'
 import customParseFormat from 'dayjs/plugin/customParseFormat';
 import _ from './translate';
+import { formatCalendarDate, getCalendarMode } from './nepaliDate'
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -160,14 +161,25 @@ export const getTimeago = (date?: string) => {
 
 export const formatDate = (date?: string | Date, format?: string) => {
 
+    if (!date) {
+        return ''
+    }
+
+    // When storing/parsing ISO for APIs, always use Gregorian
+    if (format === 'YYYY-MM-DD') {
+        return dayjs(date).format('YYYY-MM-DD')
+    }
+
+    // Display respects BS/AD calendar preference (nepal_compliance / NepaliDateLib)
+    if (getCalendarMode() === 'BS') {
+        return formatCalendarDate(date, format || getUserDateFormat())
+    }
+
     if (!format) {
         format = getUserDateFormat()
     }
 
-    if (date) {
-        return dayjs(date).format(format)
-    }
-    return ''
+    return dayjs(date).format(format)
 }
 
 /**

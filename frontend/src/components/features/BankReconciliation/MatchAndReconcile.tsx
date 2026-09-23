@@ -28,6 +28,7 @@ import SelectedTransactionsTable from "./SelectedTransactionsTable"
 import MatchFilters from "./MatchFilters"
 import { useHotkeys } from "react-hotkeys-hook"
 import { KeyboardMetaKeyIcon } from "@/components/ui/keyboard-keys"
+import DualDate from "@/components/common/DualDate"
 import { Kbd, KbdGroup } from "@/components/ui/kbd"
 import { useFrappeGetCall } from "frappe-react-sdk"
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
@@ -274,7 +275,7 @@ const UnreconciledTransactionItem = ({ transaction }: { transaction: Unreconcile
             <div className="flex justify-between items-start w-full">
                 <div className="space-y-1">
                     <div className="flex items-center gap-1">
-                        <span className="font-semibold text-sm">{formatDate(transaction.date)}</span>
+                        <DualDate date={transaction.date} />
                         {transaction.transaction_type &&
                             <Badge variant='secondary' className="text-xs py-0.5 px-1 rounded-sm bg-secondary">{transaction.transaction_type}</Badge>}
                         {transaction.reference_number && <Badge

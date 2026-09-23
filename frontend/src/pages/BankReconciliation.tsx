@@ -16,9 +16,14 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import { H1 } from "@/components/ui/typography"
 import _ from "@/lib/translate"
 import { useLayoutEffect, useRef, useState } from "react"
+import { useAtomValue } from "jotai"
+import { calendarModeAtom } from "@/lib/nepaliDate"
 
 
 const BankReconciliation = () => {
+
+    // Subscribe so date displays re-render when BS/AD toggle changes
+    useAtomValue(calendarModeAtom)
 
     const [headerHeight, setHeaderHeight] = useState(0)
 

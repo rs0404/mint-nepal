@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { ArrowDownRight, ArrowUpRight, Calendar, Landmark } from 'lucide-react'
 import { formatCurrency } from '@/lib/numbers'
-import { formatDate } from '@/lib/date'
+import DualDate from '@/components/common/DualDate'
 import { UnreconciledTransaction, useGetBankAccounts } from './utils'
 import { getCompanyCurrency } from '@/lib/company'
 import { Card, CardContent } from '@/components/ui/card'
@@ -48,7 +48,7 @@ const SelectedTransactionDetails = ({ transaction, showAccount = false, account 
                             </div>
                             <div className='flex items-center gap-1'>
                                 <Calendar size='16px' />
-                                <span className='text-sm'>{formatDate(transaction.date, 'Do MMM YYYY')}</span>
+                                <DualDate date={transaction.date} format='Do MMM YYYY' primaryClassName='text-sm font-normal' />
                             </div>
                         </div>
                         <div className='flex flex-col gap-1'>

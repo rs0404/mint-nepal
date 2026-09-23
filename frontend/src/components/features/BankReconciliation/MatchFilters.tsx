@@ -12,6 +12,7 @@ import { H4 } from '@/components/ui/typography'
 import { Input } from '@/components/ui/input'
 import { Settings, Filter, X } from 'lucide-react'
 import { UnreconciledTransaction } from './utils'
+import { calendarModeAtom, bsToAd, formatCalendarDate } from '@/lib/nepaliDate'
 import LinkFieldCombobox from '../../common/LinkFieldCombobox'
 
 const MatchFilters = ({ transaction }: { transaction: UnreconciledTransaction }) => {
@@ -131,28 +132,73 @@ const CustomerFilter = ({ transaction }: { transaction: UnreconciledTransaction 
     )
 }
 
+    const [calendarMode] = useAtom(calendarModeAtom)
+
+    const displayValue = (ad?: string) => {
+        if (!ad) return ''
+        if (calendarMode === 'AD') return ad
+        return formatCalendarDate(ad, 'YYYY-MM-DD') || ad
+    }
+
+    const onBsOrAdChange = (field: 'fromDate' | 'toDate', value: string) => {
+        if (!value) {
+            setDates({ ...dates, [field]: undefined })
+            return
+        }
+        if (calendarMode === 'AD') {
+            setDates({ ...dates, [field]: value })
+            return
+        }
+        // Value is BS YYYY-MM-DD — convert to AD for storage/API
+        const ad = bsToAd(value)
+        setDates({ ...dates, [field]: ad || value })
+    }
 const DateFilters = () => {
     const [dates, setDates] = useAtom(bankRecVoucherDateFilter)
 
     return (
         <div className="grid grid-cols-2 gap-2">
             <div className="space-y-1.5">
-                <Label className="text-xs font-medium">{_("From Date")}</Label>
-                <Input
-                    type="date"
-                    value={dates.fromDate || ''}
-                    onChange={(e) => setDates({ ...dates, fromDate: e.target.value })}
-                    className="h-8 text-xs"
-                />
+                <Label className="text-xs font-medium">
+                    {_("From Date")} ({calendarMode})
+                </Label>
+                {calendarMode === 'AD' ? (
+                    <Input
+                        type="date"
+                        value={dates.fromDate || ''}
+                        onChange={(e) => setDates({ ...dates, fromDate: e.target.value })}
+                        className="h-8 text-xs"
+                    />
+                ) : (
+                    <Input
+                        type="text"
+                        placeholder="YYYY-MM-DD (BS)"
+                        value={displayValue(dates.fromDate)}
+                        onChange={(e) => onBsOrAdChange('fromDate', e.target.value)}
+                        className="h-8 text-xs font-mono"
+                    />
+                )}
             </div>
             <div className="space-y-1.5">
-                <Label className="text-xs font-medium">{_("To Date")}</Label>
-                <Input
-                    type="date"
-                    value={dates.toDate || ''}
-                    onChange={(e) => setDates({ ...dates, toDate: e.target.value })}
-                    className="h-8 text-xs"
-                />
+                <Label className="text-xs font-medium">
+                    {_("To Date")} ({calendarMode})
+                </Label>
+                {calendarMode === 'AD' ? (
+                    <Input
+                        type="date"
+                        value={dates.toDate || ''}
+                        onChange={(e) => setDates({ ...dates, toDate: e.target.value })}
+                        className="h-8 text-xs"
+                    />
+                ) : (
+                    <Input
+                        type="text"
+                        placeholder="YYYY-MM-DD (BS)"
+                        value={displayValue(dates.toDate)}
+                        onChange={(e) => onBsOrAdChange('toDate', e.target.value)}
+                        className="h-8 text-xs font-mono"
+                    />
+                )}
             </div>
         </div>
     )
