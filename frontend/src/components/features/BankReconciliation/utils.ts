@@ -1,4 +1,4 @@
-import { ActionLog, bankRecActionLog, bankRecAmountFilter, bankRecDateAtom, bankRecMatchFilters, bankRecSearchText, bankRecSelectedTransactionAtom, bankRecTransactionTypeFilter, bankRecUnreconcileModalAtom, bankRecVoucherAmountFilter, bankRecVoucherCustomerFilter, bankRecVoucherDateFilter, SelectedBank, selectedBankAccountAtom } from './bankRecAtoms'
+import { ActionLog, bankRecActionLog, bankRecAmountFilter, bankRecDateAtom, bankRecMatchFilters, bankRecSearchText, bankRecSelectedTransactionAtom, bankRecTransactionSortOrder, bankRecTransactionTypeFilter, bankRecUnreconcileModalAtom, bankRecVoucherAmountFilter, bankRecVoucherCustomerFilter, bankRecVoucherDateFilter, SelectedBank, selectedBankAccountAtom, TransactionSortOrder } from './bankRecAtoms'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useMemo } from 'react'
 import { SWRConfiguration, useFrappeGetCall, useFrappeGetDoc, useFrappePostCall, useSWRConfig } from 'frappe-react-sdk'
@@ -184,6 +184,7 @@ export const useRefreshUnreconciledTransactions = () => {
     const searchString = useAtomValue(bankRecSearchText)
     const typeFilter = useAtomValue(bankRecTransactionTypeFilter)
     const amountFilter = useAtomValue(bankRecAmountFilter)
+    const sortOrder = useAtomValue(bankRecTransactionSortOrder)
 
     const { data: unreconciledTransactions } = useGetUnreconciledTransactions()
 
@@ -212,7 +213,7 @@ export const useRefreshUnreconciledTransactions = () => {
             includeScore: true
         }) : null
 
-        const results = getSearchResults(searchIndex, searchString, typeFilter, amountFilter, unreconciledTransactions?.message)
+        const results = getSearchResults(searchIndex, searchString, typeFilter, amountFilter, unreconciledTransactions?.message, sortOrder)
 
         const currentIndex = results.findIndex(t => t.name === transaction.name)
         let nextTransaction = null
@@ -398,6 +399,15 @@ export function useTransactionSearch(): [string, DebouncedState<(value: string) 
     return [debouncedValue, updateDebouncedValue]
 }
 
+/** Sort transactions by date, using the name as a tie-breaker so same-day rows keep a stable order. Returns a new array. */
+export const sortTransactionsByDate = <T extends { date?: string, name: string }>(transactions: T[], sortOrder: TransactionSortOrder): T[] => {
+    const direction = sortOrder === 'Newest' ? -1 : 1
+    return [...transactions].sort((a, b) => {
+        const byDate = (a.date ?? '').localeCompare(b.date ?? '')
+        return direction * (byDate !== 0 ? byDate : a.name.localeCompare(b.name))
+    })
+}
+
 /** Utility function to get the search results based on the search index, search string, type filter, amount filter and unreconciled transactions */
 export const getSearchResults = (
     /** Fuse index of the unreconciled transactions */
@@ -409,7 +419,9 @@ export const getSearchResults = (
     /** Amount filter */
     amountFilter: string,
     /** Unreconciled transactions */
-    unreconciledTransactions?: UnreconciledTransaction[]) => {
+    unreconciledTransactions?: UnreconciledTransaction[],
+    /** Order by transaction date */
+    sortOrder: TransactionSortOrder = 'Oldest') => {
 
     let r = []
     if (!searchIndex || !search) {
@@ -457,7 +469,7 @@ export const getSearchResults = (
         })
     }
 
-    return r
+    return sortTransactionsByDate(r, sortOrder)
 }
 
 export const useUpdateActionLog = () => {

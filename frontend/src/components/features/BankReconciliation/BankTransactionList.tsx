@@ -1,6 +1,6 @@
 import { useAtomValue, useSetAtom } from "jotai"
 import { MissingFiltersBanner } from "./MissingFiltersBanner"
-import { bankRecDateAtom, bankRecUnreconcileModalAtom, selectedBankAccountAtom } from "./bankRecAtoms"
+import { bankRecDateAtom, bankRecTransactionSortOrder, bankRecUnreconcileModalAtom, selectedBankAccountAtom } from "./bankRecAtoms"
 import { Paragraph } from "@/components/ui/typography"
 import { formatDate } from "@/lib/date"
 import DualDate from "@/components/common/DualDate"
@@ -11,7 +11,8 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { ArrowDownRight, ArrowUpRight, CheckCircle2, ChevronDown, DollarSign, ExternalLink, ImportIcon, ListIcon, Search, Undo2, XCircle } from "lucide-react"
 import ErrorBanner from "@/components/ui/error-banner"
 import { Badge } from "@/components/ui/badge"
-import { useGetBankTransactions } from "./utils"
+import { sortTransactionsByDate, useGetBankTransactions } from "./utils"
+import TransactionSortButton from "./TransactionSortButton"
 import { BankTransaction } from "@/types/Accounts/BankTransaction"
 import { Button } from "@/components/ui/button"
 import _ from "@/lib/translate"
@@ -58,6 +59,7 @@ const BankTransactionListView = () => {
     const [amountFilter, setAmountFilter] = useState<{ value: number, stringValue?: string | number }>({ value: 0, stringValue: '0.00' })
     const [typeFilter, setTypeFilter] = useState('All')
     const [status, setStatus] = useState<'Reconciled' | 'Unreconciled' | 'All' | 'Partially Reconciled'>('All')
+    const sortOrder = useAtomValue(bankRecTransactionSortOrder)
 
     const onSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         setSearch(e.target.value)
@@ -68,7 +70,7 @@ const BankTransactionListView = () => {
             return []
         }
 
-        return data.message.filter((transaction) => {
+        const filtered = data.message.filter((transaction) => {
 
             if (search && !transaction.description?.toLowerCase().includes(search.toLowerCase())) {
                 return false
@@ -114,8 +116,8 @@ const BankTransactionListView = () => {
             return true
         })
 
-
-    }, [data, search, amountFilter, typeFilter, status])
+        return sortTransactionsByDate(filtered, sortOrder)
+    }, [data, search, amountFilter, typeFilter, status, sortOrder])
 
     return <div className="space-y-4 py-2">
 
@@ -344,6 +346,9 @@ const Filters = ({
                     <DropdownMenuItem onClick={() => setStatus('Partially Reconciled')}>{<CheckCircle2 className="w-4 h-4 text-yellow-500" />} {_("Partially Reconciled")}</DropdownMenuItem>
                 </DropdownMenuContent>
             </DropdownMenu>
+        </div>
+        <div>
+            <TransactionSortButton />
         </div>
     </div>
 }

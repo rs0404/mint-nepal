@@ -44,6 +44,9 @@ export const bankRecSearchText = atom<string>('')
 export const bankRecAmountFilter = atom<string>('')
 export const bankRecTransactionTypeFilter = atom<string>('All')
 
+export type TransactionSortOrder = 'Oldest' | 'Newest'
+export const bankRecTransactionSortOrder = atomWithStorage<TransactionSortOrder>('mint-bank-rec-transaction-sort-order', 'Oldest')
+
 export const bankRecVoucherCustomerFilter = atom<string>('')
 export const bankRecVoucherDateFilter = atom<{ fromDate: string | undefined, toDate: string | undefined }>({
     fromDate: undefined,

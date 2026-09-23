@@ -1,5 +1,5 @@
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
-import { bankRecAmountFilter, bankRecDateAtom, bankRecRecordJournalEntryModalAtom, bankRecRecordPaymentModalAtom, bankRecSelectedTransactionAtom, bankRecTransactionTypeFilter, bankRecTransferModalAtom, selectedBankAccountAtom } from "./bankRecAtoms"
+import { bankRecAmountFilter, bankRecDateAtom, bankRecTransactionSortOrder, bankRecRecordJournalEntryModalAtom, bankRecRecordPaymentModalAtom, bankRecSelectedTransactionAtom, bankRecTransactionTypeFilter, bankRecTransferModalAtom, selectedBankAccountAtom } from "./bankRecAtoms"
 import { H4 } from "@/components/ui/typography"
 import { useMemo, useRef } from "react"
 import { getCompanyCurrency } from "@/lib/company"
@@ -26,6 +26,7 @@ import RecordPaymentModal from "./RecordPaymentModal"
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import SelectedTransactionsTable from "./SelectedTransactionsTable"
 import MatchFilters from "./MatchFilters"
+import TransactionSortButton from "./TransactionSortButton"
 import { useHotkeys } from "react-hotkeys-hook"
 import { KeyboardMetaKeyIcon } from "@/components/ui/keyboard-keys"
 import DualDate from "@/components/common/DualDate"
@@ -75,6 +76,7 @@ const UnreconciledTransactions = ({ contentHeight }: { contentHeight: number }) 
 
     const [typeFilter, setTypeFilter] = useAtom(bankRecTransactionTypeFilter)
     const [amountFilter, setAmountFilter] = useAtom(bankRecAmountFilter)
+    const sortOrder = useAtomValue(bankRecTransactionSortOrder)
 
     const [search, setSearch] = useTransactionSearch()
 
@@ -93,8 +95,8 @@ const UnreconciledTransactions = ({ contentHeight }: { contentHeight: number }) 
     }, [unreconciledTransactions])
 
     const results = useMemo(() => {
-        return getSearchResults(searchIndex, search, typeFilter, amountFilter, unreconciledTransactions?.message)
-    }, [searchIndex, search, typeFilter, amountFilter, unreconciledTransactions?.message])
+        return getSearchResults(searchIndex, search, typeFilter, amountFilter, unreconciledTransactions?.message, sortOrder)
+    }, [searchIndex, search, typeFilter, amountFilter, unreconciledTransactions?.message, sortOrder])
 
     const setSelectedTransaction = useSetAtom(bankRecSelectedTransactionAtom(bankAccount?.name || ''))
 
@@ -186,6 +188,9 @@ const UnreconciledTransactions = ({ contentHeight }: { contentHeight: number }) 
                         <DropdownMenuItem onClick={() => onTypeFilterChange('Credits')}><ArrowDownRight className="text-green-600" /> {_("Credits")}</DropdownMenuItem>
                     </DropdownMenuContent>
                 </DropdownMenu>
+            </div>
+            <div>
+                <TransactionSortButton />
             </div>
         </div>
 
