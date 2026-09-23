@@ -137,26 +137,32 @@ export const useGetVouchersForTransaction = (transaction: UnreconciledTransactio
     let max_amount = voucherAmountFilter.max
 
     if (voucherAmountFilter.includeTDS) {
-        // If include TDS, we want to find vouchers that are either the exact amount OR the gross amount
-        // Standard TDS is 1.5%
-        const grossAmount = transactionAmount / 0.985
-        min_amount = transactionAmount
-        max_amount = grossAmount + 0.1 // Add a small tolerance
+        // Expand/intersect with the net→gross TDS window so user min/max still apply.
+        // Standard TDS is 1.5%: bank shows net, voucher may be the pre-TDS gross.
+        const tdsMin = transactionAmount
+        const tdsMax = (transactionAmount / 0.985) + 0.1
+        min_amount = min_amount != null ? Math.max(min_amount, tdsMin) : tdsMin
+        max_amount = max_amount != null ? Math.min(max_amount, tdsMax) : tdsMax
     }
 
     const fromDate = voucherDateFilter.fromDate || dates.fromDate
     const toDate = voucherDateFilter.toDate || dates.toDate
 
+    // Expense Claim is shown in older saved filter state but ERPNext v15 has no matcher for it
+    const documentTypes = (matchFilters ?? ['payment_entry', 'journal_entry']).filter(
+        (filter) => filter !== 'expense_claim'
+    )
+
     return useFrappeGetCall<{ message: LinkedPayment[] }>('mint.apis.bank_reconciliation.get_linked_payments', {
         bank_transaction_name: transaction.name,
-        document_types: matchFilters ?? ['payment_entry', 'journal_entry'],
+        document_types: documentTypes,
         from_date: fromDate,
         to_date: toDate,
         filter_by_reference_date: 0,
         party: voucherCustomerFilter || undefined,
         min_amount: min_amount,
         max_amount: max_amount
-    }, `bank-reconciliation-vouchers-${transaction.name}-${fromDate}-${toDate}-${matchFilters.join(',')}-${voucherCustomerFilter}-${min_amount}-${max_amount}`, {
+    }, `bank-reconciliation-vouchers-${transaction.name}-${fromDate}-${toDate}-${documentTypes.join(',')}-${voucherCustomerFilter}-${min_amount}-${max_amount}-${voucherAmountFilter.includeTDS}`, {
         revalidateOnFocus: false
     })
 }

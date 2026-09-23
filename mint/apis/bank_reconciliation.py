@@ -6,7 +6,50 @@ from erpnext.accounts.doctype.bank_reconciliation_tool.bank_reconciliation_tool 
 from erpnext.accounts.doctype.accounting_dimension.accounting_dimension import get_accounting_dimensions
 from erpnext.accounts.party import get_party_account
 from erpnext import get_default_cost_center
-from frappe.utils import flt
+from frappe.utils import flt, getdate
+
+
+def _parse_optional_amount(value):
+	"""Parse an amount filter, preserving 0 (unlike a truthiness check)."""
+	if value is None or value == "":
+		return None
+	return flt(value)
+
+
+def _voucher_party_matches(voucher, party: str) -> bool:
+	voucher_party = voucher.get("party") or ""
+	if voucher_party == party:
+		return True
+
+	# Journal Entry matching exposes pay_to_recd_from as party (free text),
+	# so allow a case-insensitive contains match for that doctype only.
+	if voucher.get("doctype") == "Journal Entry" and party.lower() in voucher_party.lower():
+		return True
+
+	return False
+
+
+def _voucher_in_date_range(voucher, from_date, to_date) -> bool:
+	"""Post-filter by posting/reference date.
+
+	ERPNext applies date filters in SQL for Payment Entry / Journal Entry,
+	but Sales Invoice, Purchase Invoice, and Bank Transaction queries ignore
+	from_date/to_date - so we enforce the range here for all doctypes.
+	"""
+	if not from_date and not to_date:
+		return True
+
+	raw_date = voucher.get("posting_date") or voucher.get("reference_date")
+	if not raw_date:
+		return True
+
+	voucher_date = getdate(raw_date)
+	if from_date and voucher_date < getdate(from_date):
+		return False
+	if to_date and voucher_date > getdate(to_date):
+		return False
+	return True
+
 
 @frappe.whitelist()
 def clear_clearing_date(voucher_type: str, voucher_name: str):
@@ -601,6 +644,10 @@ def get_linked_payments(
 	if isinstance(document_types, str):
 		document_types = json.loads(document_types)
 
+	# Ignore unsupported document types that may still be in client state
+	if document_types:
+		document_types = [dt for dt in document_types if dt != "expense_claim"]
+
 	matching = check_matching(
 		gl_account,
 		company,
@@ -613,13 +660,18 @@ def get_linked_payments(
 		to_reference_date,
 	)
 
-	# ERPNext v15's check_matching does not support party/min_amount/max_amount
-	# filters, so they are applied here on the matched vouchers instead.
+	# ERPNext v15's check_matching does not support party/min_amount/max_amount,
+	# and SI/PI/BT queries ignore date filters - apply them here.
 	if party:
-		matching = [voucher for voucher in matching if voucher.get("party") == party]
+		matching = [voucher for voucher in matching if _voucher_party_matches(voucher, party)]
 
-	min_amount = flt(min_amount) if min_amount else None
-	max_amount = flt(max_amount) if max_amount else None
+	if from_date or to_date:
+		matching = [
+			voucher for voucher in matching if _voucher_in_date_range(voucher, from_date, to_date)
+		]
+
+	min_amount = _parse_optional_amount(min_amount)
+	max_amount = _parse_optional_amount(max_amount)
 
 	if min_amount is not None:
 		matching = [voucher for voucher in matching if flt(voucher.get("paid_amount")) >= min_amount]

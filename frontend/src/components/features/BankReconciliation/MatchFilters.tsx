@@ -2,7 +2,6 @@ import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import _ from '@/lib/translate'
-import { Settings } from 'lucide-react'
 import { bankRecMatchFilters, bankRecVoucherAmountFilter, bankRecVoucherCustomerFilter, bankRecVoucherDateFilter } from './bankRecAtoms'
 import { useAtom } from 'jotai'
 import { Switch } from '@/components/ui/switch'
@@ -12,8 +11,8 @@ import { H4 } from '@/components/ui/typography'
 import { Input } from '@/components/ui/input'
 import { Settings, Filter, X } from 'lucide-react'
 import { UnreconciledTransaction } from './utils'
-import { calendarModeAtom, bsToAd, formatCalendarDate } from '@/lib/nepaliDate'
 import LinkFieldCombobox from '../../common/LinkFieldCombobox'
+import { calendarModeAtom, bsToAd, formatCalendarDate } from '@/lib/nepaliDate'
 
 const MatchFilters = ({ transaction }: { transaction: UnreconciledTransaction }) => {
     return (
@@ -47,7 +46,6 @@ export const MatchSettings = () => {
                         <ToggleSwitch label={_("Journal Entry")} id="journal_entry" />
                         <ToggleSwitch label={_("Purchase Invoice")} id="purchase_invoice" />
                         <ToggleSwitch label={_("Sales Invoice")} id="sales_invoice" />
-                        <ToggleSwitch label={_("Expense Claim")} id="expense_claim" />
                         <ToggleSwitch label={_("Bank Transaction")} id="bank_transaction" />
                     </div>
                 </div>
@@ -132,6 +130,8 @@ const CustomerFilter = ({ transaction }: { transaction: UnreconciledTransaction 
     )
 }
 
+const DateFilters = () => {
+    const [dates, setDates] = useAtom(bankRecVoucherDateFilter)
     const [calendarMode] = useAtom(calendarModeAtom)
 
     const displayValue = (ad?: string) => {
@@ -153,8 +153,6 @@ const CustomerFilter = ({ transaction }: { transaction: UnreconciledTransaction 
         const ad = bsToAd(value)
         setDates({ ...dates, [field]: ad || value })
     }
-const DateFilters = () => {
-    const [dates, setDates] = useAtom(bankRecVoucherDateFilter)
 
     return (
         <div className="grid grid-cols-2 gap-2">
@@ -204,6 +202,12 @@ const DateFilters = () => {
     )
 }
 
+const parseOptionalAmount = (value: string): number | undefined => {
+    if (value === '') return undefined
+    const amount = Number(value)
+    return Number.isFinite(amount) ? amount : undefined
+}
+
 const AmountFilters = () => {
     const [amountFilter, setAmountFilter] = useAtom(bankRecVoucherAmountFilter)
 
@@ -215,8 +219,8 @@ const AmountFilters = () => {
                     <Input
                         type="number"
                         placeholder="0"
-                        value={amountFilter.min || ''}
-                        onChange={(e) => setAmountFilter({ ...amountFilter, min: e.target.value ? Number(e.target.value) : undefined })}
+                        value={amountFilter.min ?? ''}
+                        onChange={(e) => setAmountFilter({ ...amountFilter, min: parseOptionalAmount(e.target.value) })}
                         className="h-8 text-xs"
                     />
                 </div>
@@ -225,8 +229,8 @@ const AmountFilters = () => {
                     <Input
                         type="number"
                         placeholder="Any"
-                        value={amountFilter.max || ''}
-                        onChange={(e) => setAmountFilter({ ...amountFilter, max: e.target.value ? Number(e.target.value) : undefined })}
+                        value={amountFilter.max ?? ''}
+                        onChange={(e) => setAmountFilter({ ...amountFilter, max: parseOptionalAmount(e.target.value) })}
                         className="h-8 text-xs"
                     />
                 </div>
