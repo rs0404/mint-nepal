@@ -13,6 +13,7 @@ import ErrorBanner from "@/components/ui/error-banner"
 import { Badge } from "@/components/ui/badge"
 import { sortTransactionsByDate, useGetBankTransactions } from "./utils"
 import TransactionSortButton from "./TransactionSortButton"
+import ExportStatementButton from "./ExportStatementButton"
 import { BankTransaction } from "@/types/Accounts/BankTransaction"
 import { Button } from "@/components/ui/button"
 import _ from "@/lib/translate"
@@ -349,6 +350,9 @@ const Filters = ({
         </div>
         <div>
             <TransactionSortButton />
+        </div>
+        <div>
+            <ExportStatementButton />
         </div>
     </div>
 }
