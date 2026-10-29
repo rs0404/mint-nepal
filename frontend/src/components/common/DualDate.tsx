@@ -13,6 +13,8 @@ type DualDateProps = {
     alternateClassName?: string
     /** Show the weekday and how many days ago the date was. Defaults to true. */
     showAge?: boolean
+    /** Put the date, the other calendar and the age on separate lines, for narrow table columns. */
+    stacked?: boolean
 }
 
 /** Whole calendar days between the date and today: "Today", "3 days ago", "in 2 days". */
@@ -29,7 +31,7 @@ const getDaysAgo = (date: string | Date) => {
  * Shows the date in the active calendar (BS or AD) with the other calendar
  * in a smaller muted label for quick reference.
  */
-const DualDate = ({ date, format, className, primaryClassName, alternateClassName, showAge = true }: DualDateProps) => {
+const DualDate = ({ date, format, className, primaryClassName, alternateClassName, showAge = true, stacked = false }: DualDateProps) => {
     const mode = useAtomValue(calendarModeAtom)
     if (!date) return null
 
@@ -43,7 +45,7 @@ const DualDate = ({ date, format, className, primaryClassName, alternateClassNam
     }
 
     return (
-        <span className={cn('inline-flex items-baseline gap-1.5', className)}>
+        <span className={cn(stacked ? 'inline-flex flex-col leading-tight' : 'inline-flex items-baseline gap-1.5', className)}>
             <span className={cn('font-semibold text-sm', primaryClassName)}>{primary}</span>
             {showAlternate && <span className={cn('text-[11px] text-muted-foreground font-mono', alternateClassName)}>
                 {alternateLabel} {alternate}

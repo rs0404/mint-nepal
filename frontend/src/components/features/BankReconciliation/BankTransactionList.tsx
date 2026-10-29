@@ -173,8 +173,8 @@ const BankTransactionListView = () => {
             )}
             itemContent={(_index, row) => (
                 <>
-                    <TableCell><DualDate date={row.date} /></TableCell>
-                    <TableCell className="max-w-[300px] overflow-hidden text-ellipsis whitespace-nowrap"><span title={row.description}>{row.description}</span></TableCell>
+                    <TableCell><DualDate date={row.date} stacked /></TableCell>
+                    <TableCell className="min-w-[240px] max-w-[360px] whitespace-normal"><span className="line-clamp-3 break-words" title={row.description}>{row.description}</span></TableCell>
                     <TableCell>{row.reference_number}</TableCell>
                     <TableCell className="text-right">{formatCurrency(row.withdrawal, bankAccount?.account_currency ?? getCompanyCurrency(bankAccount?.company ?? ''))}</TableCell>
                     <TableCell className="text-right">{formatCurrency(row.deposit, bankAccount?.account_currency ?? getCompanyCurrency(bankAccount?.company ?? ''))}</TableCell>
