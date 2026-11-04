@@ -5,9 +5,9 @@ import _ from '@/lib/translate'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { ArrowDownRight, ArrowRightLeftIcon, ArrowUpRight, CalendarIcon, CircleXIcon, GitCompareIcon, HistoryIcon, LandmarkIcon, Loader2Icon, ReceiptIcon, ReceiptTextIcon, UserIcon, WalletIcon } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { ActionLogItem, ActionLog as ActionLogType, bankRecActionLog, bankRecDateAtom, bankRecMatchFilters, SelectedBank, selectedBankAccountAtom } from '../BankReconciliation/bankRecAtoms'
+import { ActionLogItem, ActionLog as ActionLogType, bankRecActionLog, bankRecDateAtom, SelectedBank, selectedBankAccountAtom } from '../BankReconciliation/bankRecAtoms'
 import { useHotkeys } from 'react-hotkeys-hook'
-import { useGetBankAccounts } from '../BankReconciliation/utils'
+import { getVouchersCacheKeyPrefix, useGetBankAccounts } from '../BankReconciliation/utils'
 import { getCompanyCurrency } from '@/lib/company'
 import { formatCurrency } from '@/lib/numbers'
 import dayjs from 'dayjs'
@@ -359,7 +359,6 @@ const CancelActionLogItem = ({ item, type, timestamp, bank }: { item: ActionLogI
     const { mutate } = useSWRConfig()
     const actionLog = useSetAtom(bankRecActionLog)
     const dates = useAtomValue(bankRecDateAtom)
-    const matchFilters = useAtomValue(bankRecMatchFilters)
     const selectedBank = useAtomValue(selectedBankAccountAtom)
 
     const onUndo = () => {
@@ -373,8 +372,9 @@ const CancelActionLogItem = ({ item, type, timestamp, bank }: { item: ActionLogI
             if (selectedBank?.name === item.bankTransaction.bank_account) {
                 mutate(`bank-reconciliation-unreconciled-transactions-${selectedBank?.name}-${dates.fromDate}-${dates.toDate}`)
                 mutate(`bank-reconciliation-account-closing-balance-${selectedBank?.name}-${dates.toDate}`)
-                // Update the matching vouchers for the selected transaction
-                mutate(`bank-reconciliation-vouchers-${item.bankTransaction.name}-${dates.fromDate}-${dates.toDate}-${matchFilters.join(',')}`)
+                // Update the matching vouchers for the selected transaction (every filter combination)
+                const prefix = getVouchersCacheKeyPrefix(item.bankTransaction.name)
+                mutate((key) => typeof key === 'string' && key.startsWith(prefix))
             }
 
             setTimeout(() => {

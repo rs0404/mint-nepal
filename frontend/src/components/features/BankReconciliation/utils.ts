@@ -124,7 +124,10 @@ export const useGetBankTransactions = () => {
 }
 
 
-export const useGetVouchersForTransaction = (transaction: UnreconciledTransaction) => {
+/** SWR keys for a transaction's voucher list all start with this, whatever filters are applied */
+export const getVouchersCacheKeyPrefix = (transactionName: string) => `bank-reconciliation-vouchers-${transactionName}-`
+
+export const useGetVouchersForTransaction = (transaction: UnreconciledTransaction, search: string = '') => {
 
     const dates = useAtomValue(bankRecDateAtom)
     const matchFilters = useAtomValue(bankRecMatchFilters)
@@ -153,16 +156,17 @@ export const useGetVouchersForTransaction = (transaction: UnreconciledTransactio
         (filter) => filter !== 'expense_claim'
     )
 
-    return useFrappeGetCall<{ message: LinkedPayment[] }>('mint.apis.bank_reconciliation.get_linked_payments', {
+    // Search looks across all dates on the server; internal transfers from any date are always included
+    return useFrappeGetCall<{ message: LinkedPayment[] }>('mint.apis.bank_reconciliation.get_vouchers_for_transaction', {
         bank_transaction_name: transaction.name,
         document_types: documentTypes,
         from_date: fromDate,
         to_date: toDate,
-        filter_by_reference_date: 0,
         party: voucherCustomerFilter || undefined,
         min_amount: min_amount,
-        max_amount: max_amount
-    }, `bank-reconciliation-vouchers-${transaction.name}-${fromDate}-${toDate}-${documentTypes.join(',')}-${voucherCustomerFilter}-${min_amount}-${max_amount}-${voucherAmountFilter.includeTDS}`, {
+        max_amount: max_amount,
+        search: search || undefined
+    }, `${getVouchersCacheKeyPrefix(transaction.name)}${fromDate}-${toDate}-${documentTypes.join(',')}-${voucherCustomerFilter}-${min_amount}-${max_amount}-${voucherAmountFilter.includeTDS}-${search}`, {
         revalidateOnFocus: false
     })
 }
@@ -176,7 +180,6 @@ export const useRefreshUnreconciledTransactions = () => {
 
     const selectedBank = useAtomValue(selectedBankAccountAtom)
     const dates = useAtomValue(bankRecDateAtom)
-    const matchFilters = useAtomValue(bankRecMatchFilters)
     const setSelectedTransaction = useSetAtom(bankRecSelectedTransactionAtom(selectedBank?.name || ''))
 
     const { mutate } = useSWRConfig()
@@ -199,8 +202,11 @@ export const useRefreshUnreconciledTransactions = () => {
         if (updatedTransaction && updatedTransaction?.unallocated_amount !== 0) {
             mutate(`bank-reconciliation-unreconciled-transactions-${selectedBank?.name}-${dates.fromDate}-${dates.toDate}`)
             mutate(`bank-reconciliation-account-closing-balance-${selectedBank?.name}-${dates.toDate}`)
-            // Update the matching vouchers for the selected transaction
-            mutate(`bank-reconciliation-vouchers-${transaction.name}-${dates.fromDate}-${dates.toDate}-${matchFilters.join(',')}`)
+            // Keep the partly matched transaction selected with its new unallocated amount
+            setSelectedTransaction([{ ...transaction, unallocated_amount: updatedTransaction.unallocated_amount }])
+            // Update the matching vouchers for the selected transaction (every filter combination)
+            const prefix = getVouchersCacheKeyPrefix(transaction.name)
+            mutate((key) => typeof key === 'string' && key.startsWith(prefix))
             return
         }
 
@@ -259,35 +265,36 @@ export const useReconcileTransaction = () => {
 
     const addToActionLog = useUpdateActionLog()
 
-    const reconcileTransaction = (transaction: UnreconciledTransaction, voucher: LinkedPayment) => {
+    /** Match one voucher, or several vouchers against the same bank transaction */
+    const reconcileTransaction = (transaction: UnreconciledTransaction, voucherOrVouchers: LinkedPayment | LinkedPayment[]) => {
 
-        call({
+        const vouchers = Array.isArray(voucherOrVouchers) ? voucherOrVouchers : [voucherOrVouchers]
+
+        return call({
             bank_transaction_name: transaction.name,
-            vouchers: JSON.stringify([{
+            vouchers: JSON.stringify(vouchers.map((voucher) => ({
                 "payment_doctype": voucher.doctype,
                 "payment_name": voucher.name,
                 "amount": voucher.paid_amount
-            }])
+            })))
         }).then((res) => {
             addToActionLog({
                 type: 'match',
                 timestamp: (new Date()).getTime(),
-                isBulk: false,
-                items: [
-                    {
-                        bankTransaction: res.message,
-                        voucher: {
-                            reference_doctype: voucher.doctype,
-                            reference_name: voucher.name,
-                            reference_no: voucher.reference_no,
-                            reference_date: voucher.reference_date,
-                            posting_date: voucher.posting_date,
-                        }
+                isBulk: vouchers.length > 1,
+                items: vouchers.map((voucher) => ({
+                    bankTransaction: res.message,
+                    voucher: {
+                        reference_doctype: voucher.doctype,
+                        reference_name: voucher.name,
+                        reference_no: voucher.reference_no,
+                        reference_date: voucher.reference_date,
+                        posting_date: voucher.posting_date,
                     }
-                ]
+                }))
             })
             onReconcileTransaction(transaction, res.message)
-            toast.success(_("Reconciled"), {
+            toast.success(vouchers.length > 1 ? _("Reconciled {0} vouchers", [String(vouchers.length)]) : _("Reconciled"), {
                 duration: 4000,
                 closeButton: true,
                 action: {
@@ -298,12 +305,14 @@ export const useReconcileTransaction = () => {
                     backgroundColor: "rgb(0, 138, 46)"
                 }
             })
+            return true
         }).catch((error) => {
             console.error(error)
             toast.error(_("Error"), {
                 duration: 5000,
                 description: getErrorMessage(error)
             })
+            return false
         })
     }
 

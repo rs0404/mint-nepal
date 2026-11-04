@@ -1,7 +1,9 @@
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
 import { bankRecAmountFilter, bankRecDateAtom, bankRecTransactionSortOrder, bankRecRecordJournalEntryModalAtom, bankRecRecordPaymentModalAtom, bankRecSelectedTransactionAtom, bankRecTransactionTypeFilter, bankRecTransferModalAtom, selectedBankAccountAtom } from "./bankRecAtoms"
 import { H4 } from "@/components/ui/typography"
-import { useMemo, useRef } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
+import { useDebounceCallback } from "usehooks-ts"
+import { Checkbox } from "@/components/ui/checkbox"
 import { getCompanyCurrency } from "@/lib/company"
 import ErrorBanner from "@/components/ui/error-banner"
 import { Separator } from "@/components/ui/separator"
@@ -687,29 +689,46 @@ const RuleAction = ({ transaction }: { transaction: UnreconciledTransaction }) =
     )
 }
 
+const voucherKey = (voucher: LinkedPayment) => `${voucher.doctype}::${voucher.name}`
+
 const VouchersForTransaction = ({ transaction, contentHeight }: { transaction: UnreconciledTransaction, contentHeight: number }) => {
 
-    const { data: vouchers, isLoading, error } = useGetVouchersForTransaction(transaction)
+    const [searchInput, setSearchInput] = useState('')
+    const [search, setSearch] = useState('')
+    const updateSearch = useDebounceCallback(setSearch, 400)
 
-    if (error) {
-        return <ErrorBanner error={error} />
+    const { data: vouchers, isLoading, isValidating, error } = useGetVouchersForTransaction(transaction, search)
+
+    // Several vouchers can be matched to one bank transaction (e.g. two remittances in one deposit)
+    const [selected, setSelected] = useState<Record<string, LinkedPayment>>({})
+
+    useEffect(() => {
+        setSelected({})
+        setSearchInput('')
+        setSearch('')
+    }, [transaction.name])
+
+    const toggleVoucher = (voucher: LinkedPayment) => {
+        setSelected((prev) => {
+            const key = voucherKey(voucher)
+            const next = { ...prev }
+            if (next[key]) {
+                delete next[key]
+            } else {
+                next[key] = voucher
+            }
+            return next
+        })
     }
 
-    if (isLoading) {
-        return <div className="flex flex-col gap-2">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Separator className="flex-1" />
-                <span>or</span>
-                <Separator className="flex-1" />
-            </div>
-            <Skeleton className="h-16 w-full" />
-            <Skeleton className="h-16 w-full" />
-            <Skeleton className="h-16 w-full" />
-            <Skeleton className="h-16 w-full" />
-            <Skeleton className="h-16 w-full" />
-            <Skeleton className="h-16 w-full" />
-        </div>
+    const onSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        setSearchInput(e.target.value)
+        updateSearch(e.target.value)
     }
+
+    const selectedVouchers = Object.values(selected)
+    const searchBoxHeight = 44
+    const selectionBarHeight = selectedVouchers.length ? 76 : 0
 
     return <div className="relative space-y-2">
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -717,26 +736,106 @@ const VouchersForTransaction = ({ transaction, contentHeight }: { transaction: U
             <span>or</span>
             <Separator className="flex-1" />
         </div>
-        {vouchers?.message.length === 0 && <Empty className="h-64 my-4">
-            <EmptyHeader>
-                <EmptyMedia variant="icon">
-                    <ReceiptIcon />
-                </EmptyMedia>
-                <EmptyTitle>{_("No vouchers found for this transaction")}</EmptyTitle>
-            </EmptyHeader>
-        </Empty>}
-        <Virtuoso
-            data={vouchers?.message}
-            itemContent={(index, voucher) => (
-                <VoucherItem voucher={voucher} index={index} />
-            )}
-            style={{ height: contentHeight }}
-            totalCount={vouchers?.message.length}
-        />
+        <div className={cn("flex items-center gap-2 w-full rounded-md dark:bg-input/30 border-input border bg-transparent px-2 text-base shadow-xs transition-[color,box-shadow] outline-none",
+            "focus-within:border-ring focus-within:ring-ring/50 focus-within:ring-[3px]"
+        )}>
+            <Search className="w-5 h-5 text-muted-foreground" />
+            <label className="sr-only">{_("Search vouchers")}</label>
+            <Input
+                placeholder={_("Search vouchers by ID, reference, party or amount (all dates)")}
+                type='search'
+                value={searchInput}
+                onChange={onSearchChange}
+                className="border-none px-0 shadow-none focus-visible:ring-0 focus-visible:ring-offset-0" />
+            {isValidating && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
+            {vouchers && <span className="text-sm text-muted-foreground text-nowrap whitespace-nowrap">{vouchers.message.length} {_(vouchers.message.length === 1 ? "result" : "results")}</span>}
+        </div>
+
+        {selectedVouchers.length > 0 && <SelectedVouchersBar
+            transaction={transaction}
+            vouchers={selectedVouchers}
+            onClear={() => setSelected({})}
+        />}
+
+        {error && <ErrorBanner error={error} />}
+
+        {isLoading && !vouchers ? <div className="flex flex-col gap-2">
+            <Skeleton className="h-16 w-full" />
+            <Skeleton className="h-16 w-full" />
+            <Skeleton className="h-16 w-full" />
+            <Skeleton className="h-16 w-full" />
+            <Skeleton className="h-16 w-full" />
+            <Skeleton className="h-16 w-full" />
+        </div> : <>
+            {vouchers?.message.length === 0 && <Empty className="h-64 my-4">
+                <EmptyHeader>
+                    <EmptyMedia variant="icon">
+                        <ReceiptIcon />
+                    </EmptyMedia>
+                    <EmptyTitle>{search ? _("No vouchers match your search") : _("No vouchers found for this transaction")}</EmptyTitle>
+                </EmptyHeader>
+            </Empty>}
+            <Virtuoso
+                data={vouchers?.message}
+                itemContent={(index, voucher) => (
+                    <VoucherItem
+                        voucher={voucher}
+                        index={index}
+                        isSelected={!!selected[voucherKey(voucher)]}
+                        onToggleSelect={toggleVoucher}
+                    />
+                )}
+                style={{ height: Math.max(contentHeight - searchBoxHeight - selectionBarHeight, 200) }}
+                totalCount={vouchers?.message.length}
+            />
+        </>}
     </div >
 }
 
-const VoucherItem = ({ voucher, index }: { voucher: LinkedPayment, index: number }) => {
+const SelectedVouchersBar = ({ transaction, vouchers, onClear }: { transaction: UnreconciledTransaction, vouchers: LinkedPayment[], onClear: () => void }) => {
+
+    const { reconcileTransaction, loading } = useReconcileTransaction()
+
+    const currency = transaction.currency || vouchers[0]?.currency
+    const total = vouchers.reduce((acc, voucher) => acc + (voucher.paid_amount ?? 0), 0)
+    const unallocated = transaction.unallocated_amount ?? 0
+    // Round to paisa so floating point noise doesn't show as a difference
+    const difference = Math.round((unallocated - total) * 100) / 100
+    const isExact = difference === 0
+
+    const onReconcile = () => {
+        reconcileTransaction(transaction, vouchers).then((ok) => {
+            if (ok) {
+                onClear()
+            }
+        })
+    }
+
+    return <div className={cn("rounded-md border p-2 flex items-center justify-between gap-2",
+        isExact ? "border-green-300 bg-green-50/50" : "border-amber-300 bg-amber-50/50"
+    )}>
+        <div className="flex flex-col text-sm">
+            <span className="font-medium">
+                {_("{0} selected", [String(vouchers.length)])} · {_("Total")}: <span className="font-mono">{formatCurrency(total, currency)}</span>
+            </span>
+            <span className="text-muted-foreground">
+                {_("Unallocated")}: <span className="font-mono">{formatCurrency(unallocated, currency)}</span> · {_("Difference")}: <span className={cn("font-mono", isExact ? "text-green-700" : "text-amber-700")}>{formatCurrency(difference, currency)}</span>
+            </span>
+            {difference < 0 && <span className="text-xs text-amber-700">{_("More than the unallocated amount: the last voucher will only be partly matched.")}</span>}
+        </div>
+        <div className="flex items-center gap-2">
+            <Button variant='ghost' size='sm' onClick={onClear} disabled={loading}>{_("Clear")}</Button>
+            <Button size='sm'
+                className={cn(isExact ? "bg-green-600 hover:bg-green-700 text-white" : "")}
+                onClick={onReconcile}
+                disabled={loading}>
+                {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> {_("Reconciling")}...</> : _("Reconcile {0}", [String(vouchers.length)])}
+            </Button>
+        </div>
+    </div>
+}
+
+const VoucherItem = ({ voucher, index, isSelected, onToggleSelect }: { voucher: LinkedPayment, index: number, isSelected: boolean, onToggleSelect: (voucher: LinkedPayment) => void }) => {
 
     const selectedBank = useAtomValue(selectedBankAccountAtom)
     const selectedTransaction = useAtomValue(bankRecSelectedTransactionAtom(selectedBank?.name || ''))
@@ -777,13 +876,19 @@ const VoucherItem = ({ voucher, index }: { voucher: LinkedPayment, index: number
     return <div className="py-1 px-1">
         <div
             className={cn("border outline overflow-hidden relative rounded-md p-2",
-                isSuggested ? "border-amber-500 bg-amber-50/50 outline-amber-500" : "border-border bg-card outline-transparent"
+                isSelected ? "border-primary bg-primary/5 outline-primary" :
+                    isSuggested ? "border-amber-500 bg-amber-50/50 outline-amber-500" : "border-border bg-card outline-transparent"
             )}
         >
 
             <div className="flex justify-between items-end gap-2">
                 <div className="flex flex-col gap-2">
                     <div className="flex items-center gap-2">
+                        <Checkbox
+                            checked={isSelected}
+                            onCheckedChange={() => onToggleSelect(voucher)}
+                            aria-label={_("Select {0} to match with others", [voucher.name])}
+                        />
                         <Badge variant='secondary' className={cn("text-sm rounded-sm", isSuggested ? "bg-amber-100 text-amber-700" : "bg-secondary")}>{_(voucher.doctype)}</Badge>
                         <a target="_blank"
                             href={`/app/${slug(voucher.doctype)}/${voucher.name}`}

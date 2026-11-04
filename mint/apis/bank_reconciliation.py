@@ -6,7 +6,7 @@ from erpnext.accounts.doctype.bank_reconciliation_tool.bank_reconciliation_tool 
 from erpnext.accounts.doctype.accounting_dimension.accounting_dimension import get_accounting_dimensions
 from erpnext.accounts.party import get_party_account
 from erpnext import get_default_cost_center
-from frappe.utils import flt, getdate
+from frappe.utils import cint, flt, getdate
 
 
 def _parse_optional_amount(value):
@@ -680,3 +680,149 @@ def get_linked_payments(
 		matching = [voucher for voucher in matching if flt(voucher.get("paid_amount")) <= max_amount]
 
 	return subtract_allocations(gl_account, matching)
+
+
+# Wide window used when searching, so vouchers outside the selected dates are found
+SEARCH_FROM_DATE = "1900-01-01"
+SEARCH_TO_DATE = "2999-12-31"
+SEARCH_RESULT_LIMIT = 200
+
+
+def _internal_transfers_for_transaction(gl_account, company, transaction, exact_match=False, exclude=None):
+	"""
+	Uncleared Internal Transfer Payment Entries into (deposit) or out of (withdrawal)
+	this bank account, from any date. Transfers are often booked on a different day
+	from when the bank shows them (e.g. courier COD remittances), so the voucher date
+	range would otherwise hide them.
+	"""
+	is_deposit = flt(transaction.deposit) > 0
+	account_field = "paid_to" if is_deposit else "paid_from"
+	currency_field = "paid_to_account_currency" if is_deposit else "paid_from_account_currency"
+	exclude = set(exclude or [])
+
+	rows = frappe.get_all(
+		"Payment Entry",
+		filters={
+			"docstatus": 1,
+			"company": company,
+			"payment_type": "Internal Transfer",
+			account_field: gl_account,
+			"clearance_date": ["is", "not set"],
+		},
+		fields=[
+			"name",
+			"base_paid_amount_after_tax as paid_amount",
+			"reference_no",
+			"reference_date",
+			"posting_date",
+			f"{currency_field} as currency",
+		],
+		order_by="posting_date desc",
+		limit=100,
+	)
+
+	vouchers = []
+	for row in rows:
+		if row.name in exclude:
+			continue
+		amount_matches = flt(row.paid_amount) == flt(transaction.unallocated_amount)
+		if exact_match and not amount_matches:
+			continue
+		ref_matches = bool(row.reference_no) and row.reference_no == transaction.reference_number
+		vouchers.append(
+			frappe._dict(
+				rank=1 + int(amount_matches) + int(ref_matches),
+				doctype="Payment Entry",
+				name=row.name,
+				paid_amount=row.paid_amount,
+				reference_no=row.reference_no,
+				reference_date=row.reference_date,
+				party=None,
+				party_type=None,
+				posting_date=row.posting_date,
+				currency=row.currency,
+			)
+		)
+	return vouchers
+
+
+def _voucher_matches_search(voucher, search: str) -> bool:
+	"""Case-insensitive match on voucher name, reference, party or amount."""
+	needle = search.strip().lower()
+	if not needle:
+		return True
+
+	for field in ("name", "reference_no", "party"):
+		if needle in str(voucher.get(field) or "").lower():
+			return True
+
+	amount_needle = needle.replace(",", "")
+	try:
+		float(amount_needle)
+	except ValueError:
+		return False
+	amount = flt(voucher.get("paid_amount"))
+	return amount_needle in (f"{amount:.2f}", f"{amount:g}", str(int(amount)))
+
+
+@frappe.whitelist()
+def get_vouchers_for_transaction(
+	bank_transaction_name,
+	document_types=None,
+	from_date=None,
+	to_date=None,
+	party=None,
+	min_amount=None,
+	max_amount=None,
+	search=None,
+):
+	"""
+	Voucher candidates for the Match panel.
+	Same as get_linked_payments, plus Internal Transfers from any date, and a
+	search that looks across all dates when search text is given.
+	"""
+	if isinstance(document_types, str):
+		document_types = json.loads(document_types)
+	document_types = [dt for dt in (document_types or ["payment_entry", "journal_entry"]) if dt != "expense_claim"]
+
+	search = (search or "").strip()
+	if search:
+		from_date, to_date = SEARCH_FROM_DATE, SEARCH_TO_DATE
+
+	matching = get_linked_payments(
+		bank_transaction_name,
+		document_types=document_types,
+		from_date=from_date,
+		to_date=to_date,
+		filter_by_reference_date=0,
+		party=party,
+		min_amount=min_amount,
+		max_amount=max_amount,
+	)
+
+	if "payment_entry" in document_types and not party:
+		transaction = frappe.get_doc("Bank Transaction", bank_transaction_name)
+		bank_account = frappe.db.get_values(
+			"Bank Account", transaction.bank_account, ["account", "company"], as_dict=True
+		)[0]
+		transfers = _internal_transfers_for_transaction(
+			bank_account.account,
+			bank_account.company,
+			transaction,
+			exact_match="exact_match" in document_types,
+			exclude={v.get("name") for v in matching if v.get("doctype") == "Payment Entry"},
+		)
+		min_value = _parse_optional_amount(min_amount)
+		max_value = _parse_optional_amount(max_amount)
+		transfers = [
+			t
+			for t in transfers
+			if (min_value is None or flt(t.paid_amount) >= min_value)
+			and (max_value is None or flt(t.paid_amount) <= max_value)
+		]
+		matching += subtract_allocations(bank_account.account, transfers)
+
+	if search:
+		matching = [v for v in matching if _voucher_matches_search(v, search)][:SEARCH_RESULT_LIMIT]
+
+	return sorted(matching, key=lambda v: -cint(v.get("rank")))
