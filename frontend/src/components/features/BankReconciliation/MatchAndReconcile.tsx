@@ -1,5 +1,5 @@
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
-import { bankRecAmountFilter, bankRecDateAtom, bankRecTransactionSortOrder, bankRecRecordJournalEntryModalAtom, bankRecRecordPaymentModalAtom, bankRecSelectedTransactionAtom, bankRecTransactionTypeFilter, bankRecTransferModalAtom, selectedBankAccountAtom } from "./bankRecAtoms"
+import { bankRecAmountFilter, bankRecDateAtom, bankRecTransactionSortOrder, bankRecRecordJournalEntryModalAtom, bankRecRecordPaymentModalAtom, bankRecSelectedTransactionAtom, bankRecTransactionTypeFilter, bankRecTransferModalAtom, bankRecVoucherSortOrder, selectedBankAccountAtom, VoucherSortOrder } from "./bankRecAtoms"
 import { H4 } from "@/components/ui/typography"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useDebounceCallback } from "usehooks-ts"
@@ -10,9 +10,9 @@ import { Separator } from "@/components/ui/separator"
 import Fuse from 'fuse.js'
 import { getSearchResults, LinkedPayment, UnreconciledTransaction, useGetRuleForTransaction, useGetUnreconciledTransactions, useGetVouchersForTransaction, useIsTransactionWithdrawal, useReconcileTransaction, useTransactionSearch } from "./utils"
 import { Input } from "@/components/ui/input"
-import { AlertCircle, ArrowDownRight, ArrowRightIcon, ArrowRightLeft, ArrowUpRight, BadgeCheck, ChevronDown, DollarSign, Landmark, LandmarkIcon, ListIcon, Loader2, Receipt, ReceiptIcon, Search, User, XCircle, ZapIcon } from "lucide-react"
+import { AlertCircle, ArrowDownRight, ArrowDownWideNarrow, ArrowRightIcon, ArrowRightLeft, ArrowUpDown, ArrowUpNarrowWide, ArrowUpRight, BadgeCheck, ChevronDown, DollarSign, Landmark, LandmarkIcon, ListIcon, Loader2, Receipt, ReceiptIcon, Search, User, XCircle, ZapIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu"
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem } from "@/components/ui/dropdown-menu"
 import { Button } from "@/components/ui/button"
 import { Virtuoso } from 'react-virtuoso'
 import { formatDate } from "@/lib/date"
@@ -699,6 +699,21 @@ const VouchersForTransaction = ({ transaction, contentHeight }: { transaction: U
 
     const { data: vouchers, isLoading, isValidating, error } = useGetVouchersForTransaction(transaction, search)
 
+    const [sortOrder, setSortOrder] = useAtom(bankRecVoucherSortOrder)
+
+    // The server returns vouchers best match first; date sorting is done here
+    const sortedVouchers = useMemo(() => {
+        const list = vouchers?.message ?? []
+        if (sortOrder === 'Best Match') {
+            return list
+        }
+        const direction = sortOrder === 'Newest' ? -1 : 1
+        return [...list].sort((a, b) => {
+            const byDate = (a.posting_date ?? '').localeCompare(b.posting_date ?? '')
+            return direction * (byDate !== 0 ? byDate : a.name.localeCompare(b.name))
+        })
+    }, [vouchers, sortOrder])
+
     // Several vouchers can be matched to one bank transaction (e.g. two remittances in one deposit)
     const [selected, setSelected] = useState<Record<string, LinkedPayment>>({})
 
@@ -736,19 +751,37 @@ const VouchersForTransaction = ({ transaction, contentHeight }: { transaction: U
             <span>or</span>
             <Separator className="flex-1" />
         </div>
-        <div className={cn("flex items-center gap-2 w-full rounded-md dark:bg-input/30 border-input border bg-transparent px-2 text-base shadow-xs transition-[color,box-shadow] outline-none",
-            "focus-within:border-ring focus-within:ring-ring/50 focus-within:ring-[3px]"
-        )}>
-            <Search className="w-5 h-5 text-muted-foreground" />
-            <label className="sr-only">{_("Search vouchers")}</label>
-            <Input
-                placeholder={_("Search vouchers by ID, reference, party or amount (all dates)")}
-                type='search'
-                value={searchInput}
-                onChange={onSearchChange}
-                className="border-none px-0 shadow-none focus-visible:ring-0 focus-visible:ring-offset-0" />
-            {isValidating && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
-            {vouchers && <span className="text-sm text-muted-foreground text-nowrap whitespace-nowrap">{vouchers.message.length} {_(vouchers.message.length === 1 ? "result" : "results")}</span>}
+        <div className="flex items-center gap-2">
+            <div className={cn("flex items-center gap-2 flex-1 min-w-0 rounded-md dark:bg-input/30 border-input border bg-transparent px-2 text-base shadow-xs transition-[color,box-shadow] outline-none",
+                "focus-within:border-ring focus-within:ring-ring/50 focus-within:ring-[3px]"
+            )}>
+                <Search className="w-5 h-5 text-muted-foreground" />
+                <label className="sr-only">{_("Search vouchers")}</label>
+                <Input
+                    placeholder={_("Search vouchers by ID, reference, party or amount (all dates)")}
+                    type='search'
+                    value={searchInput}
+                    onChange={onSearchChange}
+                    className="border-none px-0 shadow-none focus-visible:ring-0 focus-visible:ring-offset-0" />
+                {isValidating && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
+                {vouchers && <span className="text-sm text-muted-foreground text-nowrap whitespace-nowrap">{vouchers.message.length} {_(vouchers.message.length === 1 ? "result" : "results")}</span>}
+            </div>
+            <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                    <Button variant="outline" className="h-9 text-nowrap" aria-label={_("Sort vouchers")}>
+                        {sortOrder === 'Best Match' ? <ArrowUpDown className="w-4 h-4" /> : sortOrder === 'Newest' ? <ArrowDownWideNarrow className="w-4 h-4" /> : <ArrowUpNarrowWide className="w-4 h-4" />}
+                        {sortOrder === 'Best Match' ? _("Best match") : sortOrder === 'Newest' ? _("Newest first") : _("Oldest first")}
+                        <ChevronDown className="w-4 h-4" />
+                    </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                    <DropdownMenuRadioGroup value={sortOrder} onValueChange={(value) => setSortOrder(value as VoucherSortOrder)}>
+                        <DropdownMenuRadioItem value="Best Match">{_("Best match")}</DropdownMenuRadioItem>
+                        <DropdownMenuRadioItem value="Newest">{_("Posting date: newest first")}</DropdownMenuRadioItem>
+                        <DropdownMenuRadioItem value="Oldest">{_("Posting date: oldest first")}</DropdownMenuRadioItem>
+                    </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+            </DropdownMenu>
         </div>
 
         {selectedVouchers.length > 0 && <SelectedVouchersBar
@@ -767,7 +800,7 @@ const VouchersForTransaction = ({ transaction, contentHeight }: { transaction: U
             <Skeleton className="h-16 w-full" />
             <Skeleton className="h-16 w-full" />
         </div> : <>
-            {vouchers?.message.length === 0 && <Empty className="h-64 my-4">
+            {vouchers && sortedVouchers.length === 0 && <Empty className="h-64 my-4">
                 <EmptyHeader>
                     <EmptyMedia variant="icon">
                         <ReceiptIcon />
@@ -776,7 +809,7 @@ const VouchersForTransaction = ({ transaction, contentHeight }: { transaction: U
                 </EmptyHeader>
             </Empty>}
             <Virtuoso
-                data={vouchers?.message}
+                data={sortedVouchers}
                 itemContent={(index, voucher) => (
                     <VoucherItem
                         voucher={voucher}
@@ -786,7 +819,7 @@ const VouchersForTransaction = ({ transaction, contentHeight }: { transaction: U
                     />
                 )}
                 style={{ height: Math.max(contentHeight - searchBoxHeight - selectionBarHeight, 200) }}
-                totalCount={vouchers?.message.length}
+                totalCount={sortedVouchers.length}
             />
         </>}
     </div >
