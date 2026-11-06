@@ -93,6 +93,111 @@ def reconcile_vouchers(bank_transaction_name: str | int, vouchers: str, is_new_v
     
     return transaction
 
+
+def _get_transactions_for_multi_match(bank_transaction_names):
+	"""
+	Selected bank transactions, oldest first. They must be submitted, unreconciled,
+	on one bank account and all withdrawals or all deposits.
+	"""
+	if isinstance(bank_transaction_names, str):
+		bank_transaction_names = json.loads(bank_transaction_names)
+	names = list(dict.fromkeys(bank_transaction_names or []))
+	if not names:
+		frappe.throw(_("Select at least one bank transaction"))
+
+	transactions = frappe.get_all(
+		"Bank Transaction",
+		filters={"name": ["in", names]},
+		fields=["name", "date", "bank_account", "deposit", "withdrawal", "unallocated_amount", "docstatus"],
+		order_by="date asc, creation asc",
+	)
+	if len(transactions) != len(names):
+		frappe.throw(_("Some of the selected bank transactions no longer exist"))
+
+	for transaction in transactions:
+		if transaction.docstatus != 1 or flt(transaction.unallocated_amount) <= 0:
+			frappe.throw(_("Bank Transaction {0} is already reconciled").format(transaction.name))
+
+	if len({t.bank_account for t in transactions}) > 1:
+		frappe.throw(_("The selected bank transactions are from different bank accounts"))
+
+	if len({flt(t.withdrawal) > 0 for t in transactions}) > 1:
+		frappe.throw(_("Select only withdrawals or only deposits to match them together"))
+
+	return transactions
+
+
+def _get_voucher_remaining_amounts(gl_account, vouchers):
+	"""What is left of each voucher on the bank GL account after earlier bank transaction matches."""
+	from erpnext.accounts.doctype.bank_transaction.bank_transaction import (
+		get_related_bank_gl_entries,
+		get_total_allocated_amount,
+	)
+
+	docs = [(v["payment_doctype"], v["payment_name"]) for v in vouchers]
+	gl_amounts = get_related_bank_gl_entries(docs)
+	allocations = get_total_allocated_amount(docs)
+
+	remaining = {}
+	for doc in docs:
+		voucher_amount = flt((gl_amounts.get(doc) or {}).get(gl_account))
+		allocated = flt(((allocations.get(doc) or {}).get(gl_account) or {}).get("total"))
+		remaining[doc] = flt(voucher_amount - allocated, 2)
+	return remaining
+
+
+@frappe.whitelist(methods=["POST"])
+def reconcile_multiple_transactions(bank_transaction_names: str | list, vouchers: str | list):
+	"""
+	Match several bank transactions against one or more vouchers in one go,
+	e.g. salary transfers paid one by one against the payroll's bulk bank entry.
+
+	Transactions are taken oldest first. Each one takes what it can from the vouchers,
+	in the order given, using ERPNext's allocation; a voucher is cleared once fully used.
+	Runs in one request, so nothing is saved if any transaction fails.
+	"""
+	if isinstance(vouchers, str):
+		vouchers = json.loads(vouchers)
+	vouchers = [
+		{"payment_doctype": v["payment_doctype"], "payment_name": v["payment_name"]}
+		for v in (vouchers or [])
+	]
+	if not vouchers:
+		frappe.throw(_("Select at least one voucher"))
+
+	transactions = _get_transactions_for_multi_match(bank_transaction_names)
+	gl_account = frappe.db.get_value("Bank Account", transactions[0].bank_account, "account")
+
+	updated = []
+	for transaction in transactions:
+		remaining = _get_voucher_remaining_amounts(gl_account, vouchers)
+		if not any(amount > 0 for amount in remaining.values()):
+			break
+
+		already_linked = {
+			(row.payment_document, row.payment_entry)
+			for row in frappe.get_all(
+				"Bank Transaction Payments",
+				filters={"parent": transaction.name, "parenttype": "Bank Transaction"},
+				fields=["payment_document", "payment_entry"],
+			)
+		}
+		open_vouchers = [
+			v
+			for v in vouchers
+			if remaining[(v["payment_doctype"], v["payment_name"])] > 0
+			and (v["payment_doctype"], v["payment_name"]) not in already_linked
+		]
+		if not open_vouchers:
+			continue
+
+		updated.append(reconcile_vouchers(transaction.name, json.dumps(open_vouchers)))
+
+	if not updated:
+		frappe.throw(_("The selected vouchers have nothing left to match"))
+
+	return updated
+
 @frappe.whitelist()
 def unreconcile_transaction(transaction_name: str | int):
     """
@@ -763,6 +868,53 @@ def _voucher_matches_search(voucher, search: str) -> bool:
 		return False
 	amount = flt(voucher.get("paid_amount"))
 	return amount_needle in (f"{amount:.2f}", f"{amount:g}", str(int(amount)))
+
+
+@frappe.whitelist()
+def get_vouchers_for_transactions(
+	bank_transaction_names,
+	document_types=None,
+	from_date=None,
+	to_date=None,
+	party=None,
+	min_amount=None,
+	max_amount=None,
+	search=None,
+):
+	"""
+	Voucher candidates when several bank transactions are selected.
+	Listed as for the oldest one, but amount matching is against their combined unallocated amount.
+	"""
+	transactions = _get_transactions_for_multi_match(bank_transaction_names)
+	total = flt(sum(flt(t.unallocated_amount) for t in transactions), 2)
+
+	if isinstance(document_types, str):
+		document_types = json.loads(document_types)
+	document_types = list(document_types or ["payment_entry", "journal_entry"])
+	exact_match = "exact_match" in document_types
+	# ERPNext's exact match compares to one transaction, so it is redone here against the total.
+	# Bank Transactions have no bank GL entry, so they cannot be shared across transactions.
+	document_types = [dt for dt in document_types if dt not in ("exact_match", "bank_transaction")]
+
+	vouchers = get_vouchers_for_transaction(
+		transactions[0].name,
+		document_types=document_types,
+		from_date=from_date,
+		to_date=to_date,
+		party=party,
+		min_amount=min_amount,
+		max_amount=max_amount,
+		search=search,
+	)
+
+	for voucher in vouchers:
+		if flt(voucher.get("paid_amount"), 2) == total:
+			voucher["rank"] = cint(voucher.get("rank")) + 1
+
+	if exact_match:
+		vouchers = [v for v in vouchers if flt(v.get("paid_amount"), 2) == total]
+
+	return sorted(vouchers, key=lambda v: -cint(v.get("rank")))
 
 
 @frappe.whitelist()

@@ -8,7 +8,7 @@ import { getCompanyCurrency } from "@/lib/company"
 import ErrorBanner from "@/components/ui/error-banner"
 import { Separator } from "@/components/ui/separator"
 import Fuse from 'fuse.js'
-import { getSearchResults, LinkedPayment, UnreconciledTransaction, useGetRuleForTransaction, useGetUnreconciledTransactions, useGetVouchersForTransaction, useIsTransactionWithdrawal, useReconcileTransaction, useTransactionSearch } from "./utils"
+import { getSearchResults, getTotalUnallocated, LinkedPayment, UnreconciledTransaction, useGetRuleForTransaction, useGetUnreconciledTransactions, useGetVouchersForTransaction, useIsTransactionWithdrawal, useReconcileMultipleTransactions, useReconcileTransaction, useTransactionSearch } from "./utils"
 import { Input } from "@/components/ui/input"
 import { AlertCircle, ArrowDownRight, ArrowDownWideNarrow, ArrowRightIcon, ArrowRightLeft, ArrowUpDown, ArrowUpNarrowWide, ArrowUpRight, BadgeCheck, ChevronDown, DollarSign, Landmark, LandmarkIcon, ListIcon, Loader2, Receipt, ReceiptIcon, Search, User, XCircle, ZapIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -329,7 +329,7 @@ const VouchersSection = ({ contentHeight }: { contentHeight: number }) => {
     }
 
     if (selectedTransactions.length > 1) {
-        return <OptionsForMultipleTransactions transactions={selectedTransactions} />
+        return <OptionsForMultipleTransactions transactions={selectedTransactions} contentHeight={contentHeight} />
     }
 
     return <div style={{ minHeight: contentHeight }} className="mt-2">
@@ -376,11 +376,14 @@ const useKeyboardShortcuts = () => {
     }
 }
 
-const OptionsForMultipleTransactions = ({ transactions }: { transactions: UnreconciledTransaction[] }) => {
+const OptionsForMultipleTransactions = ({ transactions, contentHeight }: { transactions: UnreconciledTransaction[], contentHeight: number }) => {
 
     const { setTransferModalOpen, setRecordPaymentModalOpen, setRecordJournalEntryModalOpen } = useKeyboardShortcuts()
 
-    return <div className="flex flex-col py-4">
+    // Vouchers can only be shared across transactions going the same way
+    const isMixed = new Set(transactions.map((t) => (t.withdrawal ?? 0) > 0)).size > 1
+
+    return <div className="flex flex-col gap-3 py-4">
         <Card className="gap-2">
             <CardHeader>
                 <CardTitle>
@@ -462,6 +465,19 @@ const OptionsForMultipleTransactions = ({ transactions }: { transactions: Unreco
             </CardContent>
         </Card>
 
+        {isMixed ? <div className="border border-amber-500 rounded-md p-3 flex items-center gap-2 text-sm text-amber-700">
+            <AlertCircle className="w-5 h-5 shrink-0" />
+            {_("Select only withdrawals or only deposits to match them with existing vouchers.")}
+        </div> : <>
+            <TooltipProvider>
+                <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">{_("Match all selected transactions with existing vouchers, oldest transaction first.")}</span>
+                    <MatchFilters transaction={transactions[0]} />
+                </div>
+            </TooltipProvider>
+            <VouchersForTransaction transactions={transactions} contentHeight={contentHeight} />
+        </>}
+
     </div>
 }
 
@@ -530,7 +546,7 @@ const OptionsForSingleTransaction = ({ transaction, contentHeight }: { transacti
             </div>
         </TooltipProvider>
         {transaction.matched_rule && <RuleAction transaction={transaction} />}
-        <VouchersForTransaction transaction={transaction} contentHeight={contentHeight} />
+        <VouchersForTransaction transactions={[transaction]} contentHeight={contentHeight} />
     </div>
 }
 
@@ -691,13 +707,15 @@ const RuleAction = ({ transaction }: { transaction: UnreconciledTransaction }) =
 
 const voucherKey = (voucher: LinkedPayment) => `${voucher.doctype}::${voucher.name}`
 
-const VouchersForTransaction = ({ transaction, contentHeight }: { transaction: UnreconciledTransaction, contentHeight: number }) => {
+const VouchersForTransaction = ({ transactions, contentHeight }: { transactions: UnreconciledTransaction[], contentHeight: number }) => {
 
     const [searchInput, setSearchInput] = useState('')
     const [search, setSearch] = useState('')
     const updateSearch = useDebounceCallback(setSearch, 400)
 
-    const { data: vouchers, isLoading, isValidating, error } = useGetVouchersForTransaction(transaction, search)
+    const { data: vouchers, isLoading, isValidating, error } = useGetVouchersForTransaction(transactions, search)
+
+    const transactionKey = transactions.map((t) => t.name).join(',')
 
     const [sortOrder, setSortOrder] = useAtom(bankRecVoucherSortOrder)
 
@@ -717,11 +735,12 @@ const VouchersForTransaction = ({ transaction, contentHeight }: { transaction: U
     // Several vouchers can be matched to one bank transaction (e.g. two remittances in one deposit)
     const [selected, setSelected] = useState<Record<string, LinkedPayment>>({})
 
+    // Reset when a different set of transactions is selected, not when their amounts change
     useEffect(() => {
         setSelected({})
         setSearchInput('')
         setSearch('')
-    }, [transaction.name])
+    }, [transactionKey])
 
     const toggleVoucher = (voucher: LinkedPayment) => {
         setSelected((prev) => {
@@ -785,7 +804,7 @@ const VouchersForTransaction = ({ transaction, contentHeight }: { transaction: U
         </div>
 
         {selectedVouchers.length > 0 && <SelectedVouchersBar
-            transaction={transaction}
+            transactions={transactions}
             vouchers={selectedVouchers}
             onClear={() => setSelected({})}
         />}
@@ -825,19 +844,23 @@ const VouchersForTransaction = ({ transaction, contentHeight }: { transaction: U
     </div >
 }
 
-const SelectedVouchersBar = ({ transaction, vouchers, onClear }: { transaction: UnreconciledTransaction, vouchers: LinkedPayment[], onClear: () => void }) => {
+const SelectedVouchersBar = ({ transactions, vouchers, onClear }: { transactions: UnreconciledTransaction[], vouchers: LinkedPayment[], onClear: () => void }) => {
 
-    const { reconcileTransaction, loading } = useReconcileTransaction()
+    const { reconcileTransaction, loading: singleLoading } = useReconcileTransaction()
+    const { reconcileTransactions, loading: multipleLoading } = useReconcileMultipleTransactions()
+    const loading = singleLoading || multipleLoading
+    const isMultiple = transactions.length > 1
 
-    const currency = transaction.currency || vouchers[0]?.currency
+    const currency = transactions[0]?.currency || vouchers[0]?.currency
     const total = vouchers.reduce((acc, voucher) => acc + (voucher.paid_amount ?? 0), 0)
-    const unallocated = transaction.unallocated_amount ?? 0
+    const unallocated = getTotalUnallocated(transactions)
     // Round to paisa so floating point noise doesn't show as a difference
     const difference = Math.round((unallocated - total) * 100) / 100
     const isExact = difference === 0
 
     const onReconcile = () => {
-        reconcileTransaction(transaction, vouchers).then((ok) => {
+        const result = isMultiple ? reconcileTransactions(transactions, vouchers) : reconcileTransaction(transactions[0], vouchers)
+        result.then((ok) => {
             if (ok) {
                 onClear()
             }
@@ -852,9 +875,10 @@ const SelectedVouchersBar = ({ transaction, vouchers, onClear }: { transaction: 
                 {_("{0} selected", [String(vouchers.length)])} · {_("Total")}: <span className="font-mono">{formatCurrency(total, currency)}</span>
             </span>
             <span className="text-muted-foreground">
-                {_("Unallocated")}: <span className="font-mono">{formatCurrency(unallocated, currency)}</span> · {_("Difference")}: <span className={cn("font-mono", isExact ? "text-green-700" : "text-amber-700")}>{formatCurrency(difference, currency)}</span>
+                {isMultiple ? _("Unallocated in {0} transactions", [String(transactions.length)]) : _("Unallocated")}: <span className="font-mono">{formatCurrency(unallocated, currency)}</span> · {_("Difference")}: <span className={cn("font-mono", isExact ? "text-green-700" : "text-amber-700")}>{formatCurrency(difference, currency)}</span>
             </span>
             {difference < 0 && <span className="text-xs text-amber-700">{_("More than the unallocated amount: the last voucher will only be partly matched.")}</span>}
+            {isMultiple && difference > 0 && <span className="text-xs text-amber-700">{_("Less than the unallocated amount: the newest transactions will be left partly or wholly unmatched.")}</span>}
         </div>
         <div className="flex items-center gap-2">
             <Button variant='ghost' size='sm' onClick={onClear} disabled={loading}>{_("Clear")}</Button>
@@ -875,20 +899,20 @@ const VoucherItem = ({ voucher, index, isSelected, onToggleSelect }: { voucher: 
 
     const { amountMatches, postingDateMatches, referenceDateMatches, referenceMatchesFull, referenceMatchesPartial, isSuggested } = useMemo(() => {
 
-        const transaction = selectedTransaction?.[0]
+        const transactions = selectedTransaction ?? []
 
         // We need to check if the following details match:
-        // Amount
+        // Amount (against the combined unallocated amount when several transactions are selected)
         // Date
         // Reference/Description: Full or partial
         // Whether this is suggested or not - depends on the above scores
 
-        const amountMatches = voucher.paid_amount === transaction?.unallocated_amount
-        const postingDateMatches = voucher.posting_date === transaction?.date
-        const referenceDateMatches = voucher.reference_date === transaction?.date
-        const referenceMatchesFull = voucher.reference_no === transaction?.reference_number || voucher.reference_no === transaction?.description
+        const amountMatches = transactions.length > 0 && Math.round(voucher.paid_amount * 100) / 100 === getTotalUnallocated(transactions)
+        const postingDateMatches = transactions.some((t) => voucher.posting_date === t.date)
+        const referenceDateMatches = transactions.some((t) => voucher.reference_date === t.date)
+        const referenceMatchesFull = transactions.some((t) => voucher.reference_no === t.reference_number || voucher.reference_no === t.description)
 
-        const referenceMatchesPartial = transaction?.reference_number?.includes(voucher.reference_no) || transaction?.description?.includes(voucher.reference_no)
+        const referenceMatchesPartial = transactions.some((t) => t.reference_number?.includes(voucher.reference_no) || t.description?.includes(voucher.reference_no))
 
 
         const isSuggested = amountMatches && (postingDateMatches || referenceDateMatches || referenceMatchesPartial) && index === 0
@@ -897,13 +921,19 @@ const VoucherItem = ({ voucher, index, isSelected, onToggleSelect }: { voucher: 
 
     }, [voucher, selectedTransaction, index])
 
-    const { reconcileTransaction, loading } = useReconcileTransaction()
+    const { reconcileTransaction, loading: singleLoading } = useReconcileTransaction()
+    const { reconcileTransactions, loading: multipleLoading } = useReconcileMultipleTransactions()
+    const loading = singleLoading || multipleLoading
 
     const onClick = () => {
-        if (!selectedTransaction) {
+        if (!selectedTransaction?.length) {
             return
         }
-        reconcileTransaction(selectedTransaction[0], voucher)
+        if (selectedTransaction.length > 1) {
+            reconcileTransactions(selectedTransaction, [voucher])
+        } else {
+            reconcileTransaction(selectedTransaction[0], voucher)
+        }
     }
 
     return <div className="py-1 px-1">

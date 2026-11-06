@@ -127,7 +127,15 @@ export const useGetBankTransactions = () => {
 /** SWR keys for a transaction's voucher list all start with this, whatever filters are applied */
 export const getVouchersCacheKeyPrefix = (transactionName: string) => `bank-reconciliation-vouchers-${transactionName}-`
 
-export const useGetVouchersForTransaction = (transaction: UnreconciledTransaction, search: string = '') => {
+/** Combined unallocated amount of the selected transactions, rounded to paisa */
+export const getTotalUnallocated = (transactions: UnreconciledTransaction[]) =>
+    Math.round(transactions.reduce((acc, t) => acc + (t.unallocated_amount ?? 0), 0) * 100) / 100
+
+/**
+ * Vouchers to match against the selected transactions.
+ * With several selected, amounts are compared to their combined unallocated amount.
+ */
+export const useGetVouchersForTransaction = (transactions: UnreconciledTransaction[], search: string = '') => {
 
     const dates = useAtomValue(bankRecDateAtom)
     const matchFilters = useAtomValue(bankRecMatchFilters)
@@ -135,7 +143,9 @@ export const useGetVouchersForTransaction = (transaction: UnreconciledTransactio
     const voucherCustomerFilter = useAtomValue(bankRecVoucherCustomerFilter)
     const voucherDateFilter = useAtomValue(bankRecVoucherDateFilter)
 
-    const transactionAmount = transaction.unallocated_amount || 0
+    const isMultiple = transactions.length > 1
+    const transactionNames = transactions.map((t) => t.name)
+    const transactionAmount = getTotalUnallocated(transactions)
     let min_amount = voucherAmountFilter.min
     let max_amount = voucherAmountFilter.max
 
@@ -157,8 +167,8 @@ export const useGetVouchersForTransaction = (transaction: UnreconciledTransactio
     )
 
     // Search looks across all dates on the server; internal transfers from any date are always included
-    return useFrappeGetCall<{ message: LinkedPayment[] }>('mint.apis.bank_reconciliation.get_vouchers_for_transaction', {
-        bank_transaction_name: transaction.name,
+    return useFrappeGetCall<{ message: LinkedPayment[] }>(isMultiple ? 'mint.apis.bank_reconciliation.get_vouchers_for_transactions' : 'mint.apis.bank_reconciliation.get_vouchers_for_transaction', {
+        ...(isMultiple ? { bank_transaction_names: JSON.stringify(transactionNames) } : { bank_transaction_name: transactions[0]?.name }),
         document_types: documentTypes,
         from_date: fromDate,
         to_date: toDate,
@@ -166,7 +176,7 @@ export const useGetVouchersForTransaction = (transaction: UnreconciledTransactio
         min_amount: min_amount,
         max_amount: max_amount,
         search: search || undefined
-    }, `${getVouchersCacheKeyPrefix(transaction.name)}${fromDate}-${toDate}-${documentTypes.join(',')}-${voucherCustomerFilter}-${min_amount}-${max_amount}-${voucherAmountFilter.includeTDS}-${search}`, {
+    }, `${getVouchersCacheKeyPrefix(transactionNames[0])}${isMultiple ? `${transactionNames.join(',')}-` : ''}${fromDate}-${toDate}-${documentTypes.join(',')}-${voucherCustomerFilter}-${min_amount}-${max_amount}-${voucherAmountFilter.includeTDS}-${search}`, {
         revalidateOnFocus: false
     })
 }
@@ -318,6 +328,84 @@ export const useReconcileTransaction = () => {
 
     return { reconcileTransaction, loading }
 
+}
+
+/** Match several bank transactions (oldest first) against one or more vouchers */
+export const useReconcileMultipleTransactions = () => {
+
+    const { call, loading } = useFrappePostCall<{ message: BankTransaction[] }>('mint.apis.bank_reconciliation.reconcile_multiple_transactions')
+
+    const selectedBank = useAtomValue(selectedBankAccountAtom)
+    const dates = useAtomValue(bankRecDateAtom)
+    const setSelectedTransaction = useSetAtom(bankRecSelectedTransactionAtom(selectedBank?.name || ''))
+    const { mutate } = useSWRConfig()
+
+    const addToActionLog = useUpdateActionLog()
+
+    const reconcileTransactions = (transactions: UnreconciledTransaction[], vouchers: LinkedPayment[]) => {
+
+        return call({
+            bank_transaction_names: JSON.stringify(transactions.map((t) => t.name)),
+            vouchers: JSON.stringify(vouchers.map((voucher) => ({
+                "payment_doctype": voucher.doctype,
+                "payment_name": voucher.name,
+            })))
+        }).then((res) => {
+            const updated = res.message
+            const voucherByKey = new Map(vouchers.map((v) => [`${v.doctype}::${v.name}`, v]))
+
+            addToActionLog({
+                type: 'match',
+                timestamp: (new Date()).getTime(),
+                isBulk: true,
+                items: updated.flatMap((bankTransaction) => (bankTransaction.payment_entries ?? [])
+                    .filter((row) => voucherByKey.has(`${row.payment_document}::${row.payment_entry}`))
+                    .map((row) => {
+                        const voucher = voucherByKey.get(`${row.payment_document}::${row.payment_entry}`) as LinkedPayment
+                        return {
+                            bankTransaction,
+                            voucher: {
+                                reference_doctype: voucher.doctype,
+                                reference_name: voucher.name,
+                                reference_no: voucher.reference_no,
+                                reference_date: voucher.reference_date,
+                                posting_date: voucher.posting_date,
+                            }
+                        }
+                    }))
+            })
+
+            // Keep any selected transaction that still has an unallocated amount, with its new amount
+            const updatedByName = new Map(updated.map((t) => [t.name, t]))
+            const stillOpen = transactions
+                .map((t) => updatedByName.has(t.name) ? { ...t, unallocated_amount: updatedByName.get(t.name)?.unallocated_amount } : t)
+                .filter((t) => (t.unallocated_amount ?? 0) > 0)
+            setSelectedTransaction(stillOpen)
+
+            mutate(`bank-reconciliation-unreconciled-transactions-${selectedBank?.name}-${dates.fromDate}-${dates.toDate}`)
+            mutate(`bank-reconciliation-account-closing-balance-${selectedBank?.name}-${dates.toDate}`)
+            mutate((key) => typeof key === 'string' && key.startsWith('bank-reconciliation-vouchers-'))
+
+            const reconciledCount = updated.filter((t) => t.unallocated_amount === 0).length
+            toast.success(_("Matched {0} transactions", [String(updated.length)]), {
+                duration: 5000,
+                closeButton: true,
+                description: stillOpen.length > 0
+                    ? _("{0} fully reconciled, {1} still have an unallocated amount", [String(reconciledCount), String(stillOpen.length)])
+                    : undefined,
+            })
+            return true
+        }).catch((error) => {
+            console.error(error)
+            toast.error(_("Error"), {
+                duration: 5000,
+                description: getErrorMessage(error)
+            })
+            return false
+        })
+    }
+
+    return { reconcileTransactions, loading }
 }
 
 interface BankAccountWithCurrency extends Pick<BankAccount, 'name' | 'bank' | 'account_name' | 'is_credit_card' | 'company' | 'account' | 'account_type' | 'account_subtype' | 'bank_account_no' | 'last_integration_date'> {
