@@ -100,7 +100,12 @@ const UnreconciledTransactions = ({ contentHeight }: { contentHeight: number }) 
         return getSearchResults(searchIndex, search, typeFilter, amountFilter, unreconciledTransactions?.message, sortOrder)
     }, [searchIndex, search, typeFilter, amountFilter, unreconciledTransactions?.message, sortOrder])
 
-    const setSelectedTransaction = useSetAtom(bankRecSelectedTransactionAtom(bankAccount?.name || ''))
+    const [selectedTransaction, setSelectedTransaction] = useAtom(bankRecSelectedTransactionAtom(bankAccount?.name || ''))
+
+    const selectedInResults = useMemo(() => {
+        const selectedNames = new Set(selectedTransaction.map((t) => t.name))
+        return results.filter((t) => selectedNames.has(t.name)).length
+    }, [results, selectedTransaction])
 
     const onFilterChange = () => {
         setSelectedTransaction([])
@@ -205,6 +210,14 @@ const UnreconciledTransactions = ({ contentHeight }: { contentHeight: number }) 
             text={hasFilters ? _("No transactions found for the given filters.") : _("No unreconciled transactions found")}
             description={hasFilters ? _("Try adjusting your search or filter criteria.") : _("Import your bank statement to get started.")} />}
 
+        {results.length > 0 && <SelectAllRow
+            total={results.length}
+            selectedCount={selectedTransaction.length}
+            allSelected={selectedInResults === results.length}
+            onSelectAll={() => setSelectedTransaction(results)}
+            onClear={() => setSelectedTransaction([])}
+        />}
+
         <Virtuoso
             data={results}
             itemContent={(_index, transaction) => (
@@ -214,6 +227,24 @@ const UnreconciledTransactions = ({ contentHeight }: { contentHeight: number }) 
             totalCount={results?.length}
         />
 
+    </div>
+}
+
+/** "Select all" checkbox for the shown list, with the selected count and "Unselect all" */
+const SelectAllRow = ({ total, selectedCount, allSelected, onSelectAll, onClear }: { total: number, selectedCount: number, allSelected: boolean, onSelectAll: () => void, onClear: () => void }) => {
+
+    return <div className="flex items-center justify-between h-7 px-2 text-sm text-muted-foreground">
+        <label className="flex items-center gap-2 cursor-pointer">
+            <Checkbox
+                checked={allSelected}
+                onCheckedChange={(checked) => checked ? onSelectAll() : onClear()}
+            />
+            {_("Select all")} ({total})
+        </label>
+        {selectedCount > 0 && <div className="flex items-center gap-2">
+            <span>{_("{0} selected", [String(selectedCount)])}</span>
+            <Button variant='link' size='sm' className="h-auto p-0" onClick={onClear}>{_("Unselect all")}</Button>
+        </div>}
     </div>
 }
 
@@ -264,10 +295,14 @@ const UnreconciledTransactionItem = ({ transaction }: { transaction: Unreconcile
 
     const currency = transaction.currency ?? selectedBank?.account_currency ?? getCompanyCurrency(selectedBank?.company ?? '')
 
+    // Add/remove the transaction from the selected transactions (checkbox or shift-click)
+    const toggleTransaction = () => {
+        setSelectedTransaction(isSelected ? selectedTransaction.filter((t) => t.name !== transaction.name) : [...selectedTransaction, transaction])
+    }
+
     const handleSelectTransaction = (event: React.MouseEvent<HTMLDivElement>) => {
-        // If the user is pressing the shift key, add/remove the transaction from the selected transactions
         if (event.shiftKey) {
-            setSelectedTransaction(isSelected ? selectedTransaction.filter((t) => t.name !== transaction.name) : [...selectedTransaction, transaction])
+            toggleTransaction()
         } else {
             setSelectedTransaction([transaction])
         }
@@ -283,6 +318,13 @@ const UnreconciledTransactionItem = ({ transaction }: { transaction: Unreconcile
             <div className="flex justify-between items-start w-full">
                 <div className="space-y-1">
                     <div className="flex items-center gap-1">
+                        <Checkbox
+                            checked={isSelected}
+                            className="mr-1"
+                            onClick={(e) => e.stopPropagation()}
+                            onCheckedChange={toggleTransaction}
+                            aria-label={_("Select transaction")}
+                        />
                         <DualDate date={transaction.date} />
                         {transaction.transaction_type &&
                             <Badge variant='secondary' className="text-xs py-0.5 px-1 rounded-sm bg-secondary">{transaction.transaction_type}</Badge>}
@@ -761,7 +803,14 @@ const VouchersForTransaction = ({ transactions, contentHeight }: { transactions:
     }
 
     const selectedVouchers = Object.values(selected)
+    const allShownSelected = sortedVouchers.length > 0 && sortedVouchers.every((voucher) => selected[voucherKey(voucher)])
+
+    const selectAllShown = () => {
+        setSelected((prev) => ({ ...prev, ...Object.fromEntries(sortedVouchers.map((voucher) => [voucherKey(voucher), voucher])) }))
+    }
+
     const searchBoxHeight = 44
+    const selectAllRowHeight = 28
     const selectionBarHeight = selectedVouchers.length ? 76 : 0
 
     return <div className="relative space-y-2">
@@ -819,6 +868,13 @@ const VouchersForTransaction = ({ transactions, contentHeight }: { transactions:
             <Skeleton className="h-16 w-full" />
             <Skeleton className="h-16 w-full" />
         </div> : <>
+            {sortedVouchers.length > 0 && <SelectAllRow
+                total={sortedVouchers.length}
+                selectedCount={selectedVouchers.length}
+                allSelected={allShownSelected}
+                onSelectAll={selectAllShown}
+                onClear={() => setSelected({})}
+            />}
             {vouchers && sortedVouchers.length === 0 && <Empty className="h-64 my-4">
                 <EmptyHeader>
                     <EmptyMedia variant="icon">
@@ -837,7 +893,7 @@ const VouchersForTransaction = ({ transactions, contentHeight }: { transactions:
                         onToggleSelect={toggleVoucher}
                     />
                 )}
-                style={{ height: Math.max(contentHeight - searchBoxHeight - selectionBarHeight, 200) }}
+                style={{ height: Math.max(contentHeight - searchBoxHeight - selectAllRowHeight - selectionBarHeight, 200) }}
                 totalCount={sortedVouchers.length}
             />
         </>}

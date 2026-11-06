@@ -166,7 +166,8 @@ export const useGetVouchersForTransaction = (transactions: UnreconciledTransacti
         (filter) => filter !== 'expense_claim'
     )
 
-    // Search looks across all dates on the server; internal transfers from any date are always included
+    // Search looks across all dates on the server; internal transfers from any date are always included.
+    // Several transactions go by POST, since "Select all" can send more names than fit in a URL.
     return useFrappeGetCall<{ message: LinkedPayment[] }>(isMultiple ? 'mint.apis.bank_reconciliation.get_vouchers_for_transactions' : 'mint.apis.bank_reconciliation.get_vouchers_for_transaction', {
         ...(isMultiple ? { bank_transaction_names: JSON.stringify(transactionNames) } : { bank_transaction_name: transactions[0]?.name }),
         document_types: documentTypes,
@@ -178,7 +179,7 @@ export const useGetVouchersForTransaction = (transactions: UnreconciledTransacti
         search: search || undefined
     }, `${getVouchersCacheKeyPrefix(transactionNames[0])}${isMultiple ? `${transactionNames.join(',')}-` : ''}${fromDate}-${toDate}-${documentTypes.join(',')}-${voucherCustomerFilter}-${min_amount}-${max_amount}-${voucherAmountFilter.includeTDS}-${search}`, {
         revalidateOnFocus: false
-    })
+    }, isMultiple ? 'POST' : 'GET')
 }
 
 
