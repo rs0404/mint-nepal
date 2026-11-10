@@ -5,7 +5,7 @@ import { Paragraph } from "@/components/ui/typography"
 import { formatDate } from "@/lib/date"
 import DualDate from "@/components/common/DualDate"
 import { Table, TableBody, TableCell, TableHead, TableRow } from "@/components/ui/table"
-import { formatCurrency, getCurrencyFormatInfo } from "@/lib/numbers"
+import { formatCurrency } from "@/lib/numbers"
 import { getCompanyCurrency } from "@/lib/company"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { ArrowDownRight, ArrowUpRight, CheckCircle2, ChevronDown, DollarSign, ExternalLink, ImportIcon, ListIcon, Search, Undo2, XCircle } from "lucide-react"
@@ -18,9 +18,8 @@ import { BankTransaction } from "@/types/Accounts/BankTransaction"
 import { Button } from "@/components/ui/button"
 import _ from "@/lib/translate"
 import { Input } from "@/components/ui/input"
-import CurrencyInput from "react-currency-input-field"
+import AmountFilterInput from "./AmountFilterInput"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
-import { getCurrencySymbol } from "@/lib/currency"
 import { cn } from "@/lib/utils"
 import { useDebounceValue } from "usehooks-ts"
 import { useMemo, useState } from "react"
@@ -263,10 +262,6 @@ const Filters = ({
     const bankAccount = useAtomValue(selectedBankAccountAtom)
 
     const currency = bankAccount?.account_currency ?? getCompanyCurrency(bankAccount?.company ?? '')
-    const currencySymbol = getCurrencySymbol(currency)
-    const formatInfo = getCurrencyFormatInfo(currency)
-    const groupSeparator = formatInfo.group_sep || ","
-    const decimalSeparator = formatInfo.decimal_str || "."
 
     return <div className="flex py-2 w-full gap-2">
         <label className="sr-only">{_("Search transactions")}</label>
@@ -282,30 +277,7 @@ const Filters = ({
             </div>
         </div>
         <div className="w-[25%]">
-            <label className="sr-only">{_("Filter by amount")}</label>
-            <CurrencyInput
-                groupSeparator={groupSeparator}
-                decimalSeparator={decimalSeparator}
-                placeholder={`${currencySymbol}0${decimalSeparator}00`}
-                decimalsLimit={2}
-                value={amountFilter.stringValue}
-                maxLength={12}
-                decimalScale={2}
-                prefix={currencySymbol}
-                onValueChange={(v, _n, values) => {
-                    // If the input ends with a decimal or a decimal with trailing zeroes, store the string since we need the user to be able to type the decimals.
-                    // When the user eventually types the decimals or blurs out, the value is formatted anyway.
-                    // Otherwise store the float value
-                    // Check if the value ends with a decimal or a decimal with trailing zeroes
-                    const isDecimal = v?.endsWith(decimalSeparator) || v?.endsWith(decimalSeparator + '0')
-                    const newValue = isDecimal ? v : values?.float ?? ''
-                    setAmountFilter({
-                        value: Number(newValue),
-                        stringValue: newValue
-                    })
-                }}
-                customInput={Input}
-            />
+            <AmountFilterInput currency={currency} amountFilter={amountFilter} setAmountFilter={setAmountFilter} />
         </div>
         <div className="w-[25%]">
             <DropdownMenu>
