@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
 import AmountFilterInput, { AmountFilter } from "./AmountFilterInput"
+import HighlightMatch from "@/components/common/HighlightMatch"
 
 const BankReconciliationStatement = () => {
     const bankAccount = useAtomValue(selectedBankAccountAtom)
@@ -284,15 +285,15 @@ const BankReconciliationStatementView = () => {
                         <TableCell>{formatDate(row.posting_date)}</TableCell>
                         <TableCell>{_(row.payment_document)}</TableCell>
                         <TableCell>
-                            <a target="_blank" className="underline underline-offset-4" href={`/app/${slug(row.payment_document)}/${row.payment_entry}`}>{row.payment_entry}</a>
+                            <a target="_blank" className="underline underline-offset-4" href={`/app/${slug(row.payment_document)}/${row.payment_entry}`}><HighlightMatch text={row.payment_entry} search={search} /></a>
                         </TableCell>
                         <TableCell className="text-right">{formatCurrency(row.debit, row.account_currency)}</TableCell>
                         <TableCell className="text-right">{formatCurrency(row.credit, row.account_currency)}</TableCell>
-                        <TableCell className="max-w-[250px] overflow-hidden text-ellipsis whitespace-nowrap" title={row.against_account}><a target="_blank" className="underline underline-offset-4" href={`/app/account/${row.against_account}`}>{row.against_account}</a></TableCell>
+                        <TableCell className="max-w-[250px] overflow-hidden text-ellipsis whitespace-nowrap" title={row.against_account}><a target="_blank" className="underline underline-offset-4" href={`/app/account/${row.against_account}`}><HighlightMatch text={row.against_account} search={search} /></a></TableCell>
                         <TableCell>
                             <Tooltip delayDuration={500}>
                                 <TooltipTrigger onClick={() => onCopy(row.reference_no)}>
-                                    {row.reference_no?.slice(0, 40)}{row.reference_no?.length > 40 ? "..." : ""}
+                                    <HighlightMatch text={row.reference_no?.slice(0, 40)} search={search} />{row.reference_no?.length > 40 ? "..." : ""}
                                 </TooltipTrigger>
                                 <TooltipContent align='start'>
                                     {_("Copy to clipboard")}

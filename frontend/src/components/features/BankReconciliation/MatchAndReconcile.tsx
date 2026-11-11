@@ -1,5 +1,5 @@
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
-import { bankRecAmountFilter, bankRecDateAtom, bankRecTransactionSortOrder, bankRecRecordJournalEntryModalAtom, bankRecRecordPaymentModalAtom, bankRecSelectedTransactionAtom, bankRecTransactionTypeFilter, bankRecTransferModalAtom, bankRecVoucherSortOrder, selectedBankAccountAtom, VoucherSortOrder } from "./bankRecAtoms"
+import { bankRecAmountFilter, bankRecDateAtom, bankRecSearchText, bankRecTransactionSortOrder, bankRecRecordJournalEntryModalAtom, bankRecRecordPaymentModalAtom, bankRecSelectedTransactionAtom, bankRecTransactionTypeFilter, bankRecTransferModalAtom, bankRecVoucherSortOrder, selectedBankAccountAtom, VoucherSortOrder } from "./bankRecAtoms"
 import { H4 } from "@/components/ui/typography"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useDebounceCallback } from "usehooks-ts"
@@ -28,6 +28,7 @@ import RecordPaymentModal from "./RecordPaymentModal"
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import SelectedTransactionsTable from "./SelectedTransactionsTable"
 import MatchFilters from "./MatchFilters"
+import HighlightMatch from "@/components/common/HighlightMatch"
 import TransactionSortButton from "./TransactionSortButton"
 import { useHotkeys } from "react-hotkeys-hook"
 import { KeyboardMetaKeyIcon } from "@/components/ui/keyboard-keys"
@@ -291,6 +292,8 @@ const UnreconciledTransactionItem = ({ transaction }: { transaction: Unreconcile
 
     const { amount, isWithdrawal } = useIsTransactionWithdrawal(transaction)
 
+    const search = useAtomValue(bankRecSearchText)
+
     const isSelected = selectedTransaction?.some((t) => t.name === transaction.name)
 
     const currency = transaction.currency ?? selectedBank?.account_currency ?? getCompanyCurrency(selectedBank?.company ?? '')
@@ -332,7 +335,7 @@ const UnreconciledTransactionItem = ({ transaction }: { transaction: Unreconcile
                             title={transaction.reference_number}
                             className="inline-block max-w-[300px] overflow-hidden text-ellipsis whitespace-nowrap bg-primary-foreground rounded-sm text-primary"
                         >
-                            {_("Ref")}: {transaction.reference_number}</Badge>}
+                            {_("Ref")}: <HighlightMatch text={transaction.reference_number} search={search} /></Badge>}
 
                         {transaction.matched_rule && <Badge
                             variant='secondary'
@@ -340,7 +343,7 @@ const UnreconciledTransactionItem = ({ transaction }: { transaction: Unreconcile
                             className="text-xs py-0.5 px-1 rounded-sm bg-primary-foreground text-primary">
                             <ZapIcon className="w-4 h-4" /> {transaction.matched_rule}</Badge>}
                     </div>
-                    <span className="text-sm">{transaction.description}</span>
+                    <span className="text-sm"><HighlightMatch text={transaction.description} search={search} /></span>
                 </div>
                 <div className="gap-1 flex flex-col items-end min-w-36 h-full text-right">
                     {isWithdrawal ? <ArrowUpRight className="w-6 h-6 text-destructive" /> : <ArrowDownRight className="w-6 h-6 text-green-600" />}

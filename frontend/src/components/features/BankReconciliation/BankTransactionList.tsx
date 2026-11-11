@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button"
 import _ from "@/lib/translate"
 import { Input } from "@/components/ui/input"
 import AmountFilterInput from "./AmountFilterInput"
+import HighlightMatch from "@/components/common/HighlightMatch"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
 import { useDebounceValue } from "usehooks-ts"
@@ -173,7 +174,7 @@ const BankTransactionListView = () => {
             itemContent={(_index, row) => (
                 <>
                     <TableCell><DualDate date={row.date} stacked /></TableCell>
-                    <TableCell className="min-w-[240px] max-w-[360px] whitespace-normal"><span className="line-clamp-3 break-words" title={row.description}>{row.description}</span></TableCell>
+                    <TableCell className="min-w-[240px] max-w-[360px] whitespace-normal"><span className="line-clamp-3 break-words" title={row.description}><HighlightMatch text={row.description} search={search} /></span></TableCell>
                     <TableCell>{row.reference_number}</TableCell>
                     <TableCell className="text-right">{formatCurrency(row.withdrawal, bankAccount?.account_currency ?? getCompanyCurrency(bankAccount?.company ?? ''))}</TableCell>
                     <TableCell className="text-right">{formatCurrency(row.deposit, bankAccount?.account_currency ?? getCompanyCurrency(bankAccount?.company ?? ''))}</TableCell>
