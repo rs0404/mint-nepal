@@ -325,7 +325,9 @@ const Filters = ({
             <TransactionSortButton />
         </div>
         <div>
-            <ExportStatementButton />
+            <ExportStatementButton
+                filters={{ search, amount: amountFilter.value, type: typeFilter, status }}
+                count={results?.length} />
         </div>
     </div>
 }

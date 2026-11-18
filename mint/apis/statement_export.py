@@ -32,24 +32,49 @@ THIN = Side(style="thin", color="000000")
 BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 
 
+TYPE_FILTERS = ("All", "Debits", "Credits")
+STATUS_FILTERS = ("All", "Reconciled", "Unreconciled", "Partially Reconciled")
+
+
 @frappe.whitelist(methods=["GET"])
-def download_bank_statement(bank_account: str, from_date: str, to_date: str):
-	"""Send the statement for a bank account and date range as an .xlsx download."""
-	data = get_statement_data(bank_account, from_date, to_date)
+def download_bank_statement(
+	bank_account: str,
+	from_date: str,
+	to_date: str,
+	search: str | None = None,
+	amount: float | None = None,
+	type: str | None = None,
+	status: str | None = None,
+):
+	"""
+	Send the statement for a bank account and date range as an .xlsx download.
+
+	`search`, `amount`, `type` and `status` are the Bank Transactions list's
+	filters; when any is set only the matching transactions are exported.
+	"""
+	filters = frappe._dict(search=search, amount=amount, type=type, status=status)
+	data = get_statement_data(bank_account, from_date, to_date, filters)
 
 	frappe.response["filename"] = _statement_filename(data)
 	frappe.response["filecontent"] = build_statement_workbook(data)
 	frappe.response["type"] = "binary"
 
 
-def get_statement_data(bank_account: str, from_date: str, to_date: str) -> frappe._dict:
+def get_statement_data(
+	bank_account: str, from_date: str, to_date: str, filters: dict | None = None
+) -> frappe._dict:
 	"""
 	Collect everything the statement shows.
 
 	The opening balance is the bank's balance at the end of the day before
 	`from_date` (see `get_opening_balance`). The closing balance is the opening
 	balance plus credits (deposits) minus debits (withdrawals) over the period.
+
+	With list `filters` applied (see `clean_filters`) only matching transactions
+	are listed and there are no opening or closing balances: they would not
+	add up with some transactions left out.
 	"""
+	filters = clean_filters(filters)
 	frappe.has_permission("Bank Account", "read", bank_account, throw=True)
 
 	from_date, to_date = getdate(from_date), getdate(to_date)
@@ -73,13 +98,25 @@ def get_statement_data(bank_account: str, from_date: str, to_date: str) -> frapp
 			["date", ">=", from_date],
 			["date", "<=", to_date],
 		],
-		fields=["name", "date", "description", "reference_number", "deposit", "withdrawal"],
+		fields=[
+			"name",
+			"date",
+			"description",
+			"reference_number",
+			"deposit",
+			"withdrawal",
+			"status",
+			"allocated_amount",
+			"unallocated_amount",
+		],
 		order_by="date asc, name asc",
 		limit_page_length=0,
 	)
 
 	rows = []
 	for t in transactions:
+		if filters and not matches_filters(t, filters):
+			continue
 		rows.append(
 			frappe._dict(
 				date=getdate(t.date),
@@ -95,6 +132,11 @@ def get_statement_data(bank_account: str, from_date: str, to_date: str) -> frapp
 	total_credit = flt(sum(r.credit for r in rows), 2)
 	downloaded_on = now_datetime()
 
+	if filters:
+		opening_balance = closing_balance = None
+	else:
+		closing_balance = flt(opening_balance + total_credit - total_debit, 2)
+
 	return frappe._dict(
 		bank_account=account.name,
 		bank=account.bank or "",
@@ -104,11 +146,56 @@ def get_statement_data(bank_account: str, from_date: str, to_date: str) -> frapp
 		downloaded_by=get_fullname(frappe.session.user),
 		downloaded_on=downloaded_on,
 		rows=rows,
+		filters=filters,
 		opening_balance=opening_balance,
 		total_debit=total_debit,
 		total_credit=total_credit,
-		closing_balance=flt(opening_balance + total_credit - total_debit, 2),
+		closing_balance=closing_balance,
 	)
+
+
+def clean_filters(filters: dict | None) -> frappe._dict:
+	"""The list filters that narrow the export down; empty when none do."""
+	filters = frappe._dict(filters or {})
+	cleaned = frappe._dict()
+
+	if (filters.search or "").strip():
+		cleaned.search = filters.search.strip()
+	if flt(filters.amount) > 0:
+		cleaned.amount = flt(filters.amount, 2)
+	for key, allowed in (("type", TYPE_FILTERS), ("status", STATUS_FILTERS)):
+		value = filters.get(key) or "All"
+		if value not in allowed:
+			frappe.throw(_("Invalid {0} filter: {1}").format(key, value))
+		if value != "All":
+			cleaned[key] = value
+	return cleaned
+
+
+def matches_filters(t: frappe._dict, filters: frappe._dict) -> bool:
+	"""Same rules as the filters on the Bank Transactions list in the Mint UI."""
+	if filters.search and filters.search.lower() not in (t.description or "").lower():
+		return False
+
+	if filters.type == "Debits" and flt(t.deposit) > 0:
+		return False
+	if filters.type == "Credits" and flt(t.withdrawal) > 0:
+		return False
+
+	allocated, unallocated = flt(t.allocated_amount), flt(t.unallocated_amount)
+	if filters.status and t.status == "Reconciled" and filters.status != "Reconciled":
+		return False
+	if filters.status == "Reconciled" and t.status != "Reconciled":
+		return False
+	if filters.status == "Unreconciled" and allocated > 0 and unallocated != 0:
+		return False
+	if filters.status == "Partially Reconciled" and allocated == 0:
+		return False
+
+	if filters.amount and filters.amount not in (flt(t.withdrawal, 2), flt(t.deposit, 2)):
+		return False
+
+	return True
 
 
 def get_opening_balance(account: frappe._dict, from_date) -> float:
@@ -174,6 +261,8 @@ def build_statement_workbook(data: frappe._dict) -> bytes:
 			),
 		),
 	)
+	if data.filters:
+		details += ((_("Filters"), _describe_filters(data.filters)),)
 	row = 3
 	for label, value in details:
 		ws.cell(row=row, column=1, value=label).font = Font(bold=True)
@@ -196,8 +285,9 @@ def build_statement_workbook(data: frappe._dict) -> bytes:
 		cell.border = BORDER
 		cell.alignment = Alignment(horizontal="center", vertical="center")
 
-	row += 1
-	_balance_row(ws, row, _("Opening Balance"), data.opening_balance)
+	if data.opening_balance is not None:
+		row += 1
+		_balance_row(ws, row, _("Opening Balance"), data.opening_balance)
 
 	for r in data.rows:
 		row += 1
@@ -219,8 +309,9 @@ def build_statement_workbook(data: frappe._dict) -> bytes:
 	for idx, value in ((5, data.total_debit), (6, data.total_credit)):
 		ws.cell(row=row, column=idx, value=value).number_format = AMOUNT_FORMAT
 
-	row += 1
-	_balance_row(ws, row, _("Closing Balance"), data.closing_balance)
+	if data.closing_balance is not None:
+		row += 1
+		_balance_row(ws, row, _("Closing Balance"), data.closing_balance)
 
 	ws.freeze_panes = ws.cell(row=header_row + 1, column=1)
 	ws.print_title_rows = f"{header_row}:{header_row}"
@@ -249,6 +340,19 @@ def _dual_date(date) -> str:
 	return "{0} (BS {1})".format(date.isoformat(), format_bs(date, "YYYY-MM-DD"))
 
 
+def _describe_filters(filters: frappe._dict) -> str:
+	parts = []
+	if filters.search:
+		parts.append(_("Description contains \"{0}\"").format(filters.search))
+	if filters.amount:
+		parts.append(_("Amount {0}").format(frappe.format_value(filters.amount, "Float")))
+	if filters.type:
+		parts.append(_(filters.type))
+	if filters.status:
+		parts.append(_(filters.status))
+	return ", ".join(parts)
+
+
 def _account_label(account: frappe._dict) -> str:
 	if account.account_name and account.bank_account_no:
 		return f"{account.account_name} - {account.bank_account_no}"
@@ -257,4 +361,5 @@ def _account_label(account: frappe._dict) -> str:
 
 def _statement_filename(data: frappe._dict) -> str:
 	name = re.sub(r"[^\w\- ()]+", "", data.bank_account).strip() or "Bank Account"
-	return f"{name} Statement {data.from_date} to {data.to_date}.xlsx"
+	suffix = " (filtered)" if data.filters else ""
+	return f"{name} Statement {data.from_date} to {data.to_date}{suffix}.xlsx"

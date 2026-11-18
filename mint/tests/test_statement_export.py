@@ -17,8 +17,17 @@ class TestStatementExport(FrappeTestCase):
 	@classmethod
 	def setUpClass(cls):
 		super().setUpClass()
+		# A company Bank Account needs a ledger no other Bank Account uses
+		used = frappe.get_all(
+			"Bank Account",
+			filters={"is_company_account": 1, "account_name": ["!=", "_Test Mint Statement"]},
+			pluck="account",
+		)
 		gl_account = frappe.db.get_value(
-			"Account", {"account_type": "Bank", "is_group": 0}, ["name", "company"], as_dict=True
+			"Account",
+			{"account_type": "Bank", "is_group": 0, "name": ["not in", used or [""]]},
+			["name", "company"],
+			as_dict=True,
 		)
 		if not gl_account:
 			raise unittest.SkipTest("Needs a Bank-type ledger account")
@@ -132,6 +141,48 @@ class TestStatementExport(FrappeTestCase):
 		gl_balance.assert_not_called()
 		self.assertEqual(data.opening_balance, 1999)
 		self.assertAlmostEqual(data.closing_balance, 1999 + 594695.40 - 11918.40, places=2)
+
+	def get_filtered(self, **filters):
+		with patch("mint.apis.statement_export.get_account_balance", return_value=2000):
+			return get_statement_data(self.bank_account.name, "2026-03-08", "2026-03-09", filters)
+
+	def test_filters_narrow_the_rows(self):
+		# Case-insensitive match on the description
+		data = self.get_filtered(search="TXN 2026-03-09")
+		self.assertEqual([(r.debit, r.credit) for r in data.rows], [(0, 594690), (11912, 0)])
+		self.assertEqual((data.total_debit, data.total_credit), (11912, 594690))
+
+		self.assertEqual([r.debit for r in self.get_filtered(type="Debits").rows], [6.40, 11912])
+		self.assertEqual([r.credit for r in self.get_filtered(type="Credits").rows], [5.40, 594690])
+		self.assertEqual([r.debit for r in self.get_filtered(amount="6.4").rows], [6.40])
+		# Nothing is reconciled in the fixtures
+		self.assertEqual(len(self.get_filtered(status="Unreconciled").rows), 4)
+		self.assertEqual(self.get_filtered(status="Reconciled").rows, [])
+
+	def test_filtered_export_has_no_balances(self):
+		data = self.get_filtered(search="2026-03-08", type="Debits")
+		self.assertEqual(len(data.rows), 1)
+		self.assertIsNone(data.opening_balance)
+		self.assertIsNone(data.closing_balance)
+
+		ws = load_workbook(BytesIO(build_statement_workbook(data))).active
+		labels = [r[3].value for r in ws.iter_rows()]
+		self.assertNotIn("Opening Balance", labels)
+		self.assertNotIn("Closing Balance", labels)
+		self.assertIn("Total", labels)
+		details = {r[0].value: r[1].value for r in ws.iter_rows() if r[0].value}
+		self.assertIn('"2026-03-08"', details["Filters"])
+		self.assertIn("Debits", details["Filters"])
+
+	def test_default_filters_export_the_full_statement(self):
+		data = self.get_filtered(search=" ", amount=0, type="All", status="All")
+		self.assertFalse(data.filters)
+		self.assertEqual(len(data.rows), 4)
+		self.assertEqual(data.opening_balance, 2000)
+
+	def test_rejects_unknown_filter_values(self):
+		with self.assertRaises(frappe.ValidationError):
+			self.get_filtered(status="Cancelled")
 
 	def test_needs_bank_account_permission(self):
 		frappe.set_user("Guest")
